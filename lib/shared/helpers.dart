@@ -210,6 +210,15 @@ class DueChip extends StatelessWidget {
   }
 }
 
+/// Shipping modes for the pickers, "Not set" first.
+const shipModeItems = [
+  SearchableDropdownItem<String>(value: null, label: 'Not set'),
+  SearchableDropdownItem<String>(value: 'SEA', label: 'Sea'),
+  SearchableDropdownItem<String>(value: 'AIR', label: 'Air'),
+  SearchableDropdownItem<String>(value: 'TRUCK', label: 'Truck'),
+  SearchableDropdownItem<String>(value: 'COURIER', label: 'Courier'),
+];
+
 /// Steps in the purchase workflow (the backend's STEP_COUNT). The month-end
 /// report is an email, not a step, so a PO is done once its goods arrive.
 const kStepCount = 9;

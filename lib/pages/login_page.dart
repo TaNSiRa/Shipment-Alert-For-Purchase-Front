@@ -429,7 +429,7 @@ class _LoginHero extends StatelessWidget {
           for (final line in const [
             'Upload the SAP "DATA BY SAP" Excel — no retyping',
             '9 steps, one input: just mark each step done',
-            'Overdue alerts, road map and monthly report',
+            'Overdue alerts, road map and a month-end email',
           ])
             Padding(
               padding: const EdgeInsets.only(bottom: 9),

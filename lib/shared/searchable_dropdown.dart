@@ -21,6 +21,7 @@ class SearchableDropdownField<T> extends StatelessWidget {
     this.dialogTitle,
     this.searchHint = 'Search',
     this.enabled = true,
+    this.dense = false,
   });
 
   final T? value;
@@ -31,9 +32,14 @@ class SearchableDropdownField<T> extends StatelessWidget {
   final String searchHint;
   final bool enabled;
 
+  /// Filter-bar size: smaller text and icon, so it sits at the height of the
+  /// chips and buttons around it.
+  final bool dense;
+
   @override
   Widget build(BuildContext context) {
     final selected = _selectedItem;
+    final iconSize = dense ? 17.0 : 24.0;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -43,13 +49,17 @@ class SearchableDropdownField<T> extends StatelessWidget {
           isEmpty: selected == null,
           decoration: decoration.copyWith(
             enabled: enabled,
-            suffixIcon: Icon(enabled ? Icons.search : Icons.arrow_drop_down),
+            suffixIcon: Icon(enabled ? Icons.search : Icons.arrow_drop_down, size: iconSize),
+            suffixIconConstraints:
+                dense ? const BoxConstraints(minWidth: 30, minHeight: 20) : decoration.suffixIconConstraints,
           ),
           child: Text(
             selected?.label ?? '',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: enabled ? const Color(0xff0f172a) : DsColors.faint2),
+            style: TextStyle(
+                fontSize: dense ? 12.5 : null,
+                color: enabled ? (dense ? DsColors.heading : const Color(0xff0f172a)) : DsColors.faint2),
           ),
         ),
       ),

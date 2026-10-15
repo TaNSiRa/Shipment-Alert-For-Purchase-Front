@@ -83,6 +83,17 @@ Future<bool> showMasterImportDialog(BuildContext context) async {
   return true;
 }
 
+/// Master tables page instead of scrolling: rows have one fixed height and a
+/// page holds as many as fit (RAP).
+const _masterRowH = 50.0;
+
+Widget _masterRow(Widget child) => Container(
+      height: _masterRowH,
+      decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: DsColors.lineSoft))),
+      child: child,
+    );
+
 class _MasterToolbar extends StatelessWidget {
   const _MasterToolbar(
       {required this.search,
@@ -156,6 +167,8 @@ class SupplierMasterPage extends StatefulWidget {
 class _SupplierMasterPageState extends State<SupplierMasterPage> {
   final search = TextEditingController();
   Timer? _debounce;
+  int page = 0;
+  int pageSize = 0;
   List<Map<String, dynamic>> rows = [];
   bool loading = true;
   String? error;
@@ -376,7 +389,10 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
         search: search,
         onSearch: (_) {
           _debounce?.cancel();
-          _debounce = Timer(const Duration(milliseconds: 300), load);
+          _debounce = Timer(const Duration(milliseconds: 300), () {
+            page = 0;
+            unawaited(load());
+          });
         },
         onAdd: () => edit(),
         onImported: load,
@@ -400,18 +416,38 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
                                 'No suppliers yet — add one or import the master Excel')
                         : MinWidthScroll(
                             minWidth: 1100,
-                            child: Column(children: [
-                              _row(null, scope, header: true),
-                              const Divider(height: 1),
-                              Expanded(
-                                child: ListView.separated(
-                                  itemCount: rows.length,
-                                  separatorBuilder: (_, __) => const Divider(
-                                      height: 1, color: DsColors.lineSoft),
-                                  itemBuilder: (_, i) => _row(rows[i], scope),
+                            child: Builder(builder: (context) {
+                              final size = max(1, pageSize);
+                              final pages = max(1, (rows.length / size).ceil());
+                              final p = page.clamp(0, pages - 1);
+                              return Column(children: [
+                                _row(null, scope, header: true),
+                                const Divider(height: 1),
+                                Expanded(
+                                  child: DsFitRows(
+                                    rowHeight: _masterRowH,
+                                    onFit: (fit) {
+                                      if (fit == pageSize) return;
+                                      final first = page * max(1, pageSize);
+                                      setState(() {
+                                        pageSize = fit;
+                                        page = first ~/ fit;
+                                      });
+                                    },
+                                    child: Column(children: [
+                                      for (final r in rows.skip(p * size).take(size))
+                                        _row(r, scope),
+                                    ]),
+                                  ),
                                 ),
-                              ),
-                            ])),
+                                PaginationBar(
+                                  page: p,
+                                  totalItems: rows.length,
+                                  pageSize: size,
+                                  onChanged: (n) => setState(() => page = n),
+                                ),
+                              ]);
+                            })),
           ),
         ),
       ),
@@ -432,7 +468,7 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
     }
 
     final content = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: EdgeInsets.symmetric(horizontal: 16, vertical: header ? 10 : 0),
       child: Row(children: [
         SizedBox(
             width: 110,
@@ -491,8 +527,8 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
       ]),
     );
     if (header) return Container(color: DsColors.subtle, child: content);
-    return InkWell(
-        onTap: scope.isSectionAdmin ? () => edit(s) : null, child: content);
+    return _masterRow(InkWell(
+        onTap: scope.isSectionAdmin ? () => edit(s) : null, child: content));
   }
 }
 
@@ -514,7 +550,9 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
   String? type;
   bool missingCode = false;
   int page = 1;
-  static const pageSize = 50;
+  /// Rows that fit the table (0 until it is measured; see _onFit).
+  int pageSize = 0;
+  Timer? _fitDebounce;
   List<Map<String, dynamic>> rows = [];
   int total = 0;
   List<Map<String, dynamic>> suppliers = [];
@@ -544,6 +582,7 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _fitDebounce?.cancel();
     search.dispose();
     super.dispose();
   }
@@ -564,7 +603,23 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
     } catch (_) {}
   }
 
+  /// Page size follows the table's height; the first row on screen stays.
+  void _onFit(int fit) {
+    if (fit == pageSize) return;
+    _fitDebounce?.cancel();
+    _fitDebounce = Timer(Duration(milliseconds: pageSize == 0 ? 0 : 200), () {
+      if (!mounted) return;
+      final first = pageSize == 0 ? 0 : (page - 1) * pageSize;
+      setState(() {
+        pageSize = fit;
+        page = first ~/ fit + 1;
+      });
+      unawaited(load());
+    });
+  }
+
   Future<void> load() async {
+    if (pageSize == 0) return;
     try {
       final r =
           await AppScope.read(context).api.getJson('/masters/materials${qs({
@@ -583,6 +638,11 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
           total = intFrom(r['total']) ?? 0;
           loading = false;
           error = null;
+          final last = max(1, (total / pageSize).ceil());
+          if (page > last) {
+            page = last;
+            unawaited(load());
+          }
         });
       }
     } on ApiException catch (e) {
@@ -847,9 +907,9 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
             padding: EdgeInsets.zero,
             clip: true,
             color: DsColors.sheet,
-            child: loading
-                ? const DsSkeletonList(rows: 8)
-                : error != null
+            // The table is laid out even while loading: its height is what
+            // decides the page size of the first request.
+            child: error != null
                     ? Center(child: ErrorPanel(message: error!, onRetry: load))
                     : MinWidthScroll(
                         minWidth: 1100,
@@ -857,16 +917,19 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
                           _row(null, scope, header: true),
                           const Divider(height: 1),
                           Expanded(
-                            child: rows.isEmpty
-                                ? const DsEmptyState(
-                                    icon: Icons.science_outlined,
-                                    message: 'No material matches')
-                                : ListView.separated(
-                                    itemCount: rows.length,
-                                    separatorBuilder: (_, __) => const Divider(
-                                        height: 1, color: DsColors.lineSoft),
-                                    itemBuilder: (_, i) => _row(rows[i], scope),
-                                  ),
+                            child: DsFitRows(
+                              rowHeight: _masterRowH,
+                              onFit: _onFit,
+                              child: loading
+                                  ? const DsSkeletonList(rows: 8)
+                                  : rows.isEmpty
+                                      ? const DsEmptyState(
+                                          icon: Icons.science_outlined,
+                                          message: 'No material matches')
+                                      : Column(children: [
+                                          for (final r in rows) _row(r, scope),
+                                        ]),
+                            ),
                           ),
                           const Divider(height: 1),
                           Padding(
@@ -877,9 +940,10 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
                                   style: DsType.meta),
                               const Spacer(),
                               PaginationBar(
+                                topBorder: false,
                                 page: page - 1,
                                 totalItems: total,
-                                pageSize: pageSize,
+                                pageSize: max(1, pageSize),
                                 onChanged: (p) {
                                   page = p + 1;
                                   unawaited(load());
@@ -908,7 +972,7 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
     }
 
     final content = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: EdgeInsets.symmetric(horizontal: 16, vertical: header ? 10 : 0),
       child: Row(children: [
         c(
             header
@@ -971,7 +1035,7 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
       ]),
     );
     if (header) return Container(color: DsColors.subtle, child: content);
-    return InkWell(
-        onTap: scope.isSectionAdmin ? () => edit(m) : null, child: content);
+    return _masterRow(InkWell(
+        onTap: scope.isSectionAdmin ? () => edit(m) : null, child: content));
   }
 }

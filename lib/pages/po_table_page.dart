@@ -20,13 +20,15 @@ class _PoTablePageState extends State<PoTablePage> {
   String shipMode = '';
   String sort = 'due';
   int page = 1;
-  static const pageSize = 50;
+  /// Rows that fit the table's height (0 until the first layout).
+  int pageSize = 0;
+  Timer? _fitDebounce;
+  static const _rowH = 61.0;
 
   List<Map<String, dynamic>> rows = [];
   int total = 0;
   bool loading = true;
   String? error;
-  final Set<int> selected = {};
   List<Map<String, dynamic>> steps = [];
   List<Map<String, dynamic>> suppliers = [];
   int _tick = -1;
@@ -58,6 +60,7 @@ class _PoTablePageState extends State<PoTablePage> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _fitDebounce?.cancel();
     search.dispose();
     super.dispose();
   }
@@ -88,6 +91,8 @@ class _PoTablePageState extends State<PoTablePage> {
       };
 
   Future<void> load({bool quiet = false}) async {
+    // The first load waits for the table to be measured (see _onFit).
+    if (pageSize == 0) return;
     final api = AppScope.read(context).api;
     if (!quiet) setState(() => loading = true);
     try {
@@ -102,7 +107,12 @@ class _PoTablePageState extends State<PoTablePage> {
         total = intFrom(result['total']) ?? 0;
         loading = false;
         error = null;
-        selected.removeWhere((id) => !data.any((r) => intFrom(r['id']) == id));
+        // A delete or filter can leave the page past the end.
+        final last = max(1, (total / pageSize).ceil());
+        if (page > last) {
+          page = last;
+          unawaited(load(quiet: true));
+        }
       });
     } on ApiException catch (e) {
       if (mounted) {
@@ -123,7 +133,6 @@ class _PoTablePageState extends State<PoTablePage> {
 
   void _filterChanged() {
     page = 1;
-    selected.clear();
     unawaited(load());
   }
 
@@ -145,23 +154,27 @@ class _PoTablePageState extends State<PoTablePage> {
     }
   }
 
-  Future<void> _bulkAdvance() async {
-    final chosen =
-        rows.where((r) => selected.contains(intFrom(r['id']))).toList();
-    if (await showAdvanceDialog(context, chosen)) {
-      selected.clear();
-      unawaited(load(quiet: true));
-    }
+  /// The table got taller or shorter: page size follows, and the page is
+  /// moved so the first row on screen stays on screen.
+  void _onFit(int fit) {
+    if (fit == pageSize) return;
+    _fitDebounce?.cancel();
+    _fitDebounce = Timer(Duration(milliseconds: pageSize == 0 ? 0 : 200), () {
+      if (!mounted) return;
+      final first = pageSize == 0 ? 0 : (page - 1) * pageSize;
+      final initial = pageSize == 0;
+      setState(() {
+        pageSize = fit;
+        page = first ~/ fit + 1;
+      });
+      unawaited(load(quiet: !initial));
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final scope = AppScope.of(context);
     final width = MediaQuery.of(context).size.width;
-    final chosen =
-        rows.where((r) => selected.contains(intFrom(r['id']))).toList();
-    final sameStep = chosen.isNotEmpty &&
-        chosen.every((r) => r['currentStep'] == chosen.first['currentStep']);
     return Column(children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(22, 16, 22, 10),
@@ -230,10 +243,10 @@ class _PoTablePageState extends State<PoTablePage> {
                       items: [
                         for (final s in steps
                             .where((s) => (intFrom(s['stepNo']) ?? 0) >= 2))
-                          DropdownMenuItem(
+                          SearchableDropdownItem(
                               value: intFrom(s['stepNo']),
-                              child: Text('${s['stepNo']}. ${s['shortName']}',
-                                  overflow: TextOverflow.ellipsis)),
+                              label: '${s['stepNo']}. ${s['shortName']}',
+                              subtitle: '${s['name']}'),
                       ],
                       onChanged: (v) {
                         step = v;
@@ -246,10 +259,11 @@ class _PoTablePageState extends State<PoTablePage> {
                       value: supplierId,
                       items: [
                         for (final s in suppliers)
-                          DropdownMenuItem(
+                          SearchableDropdownItem(
                               value: intFrom(s['id']),
-                              child: Text('${s['shortName'] ?? s['name']}',
-                                  overflow: TextOverflow.ellipsis)),
+                              label: '${s['shortName'] ?? s['name']}',
+                              subtitle:
+                                  '${s['supplierCode'] ?? ''} · ${s['name']}'),
                       ],
                       onChanged: (v) {
                         supplierId = v;
@@ -257,15 +271,12 @@ class _PoTablePageState extends State<PoTablePage> {
                       },
                     ),
                     _dropdown<String>(
-                      width: 130,
+                      width: 140,
                       hint: 'All modes',
                       value: shipMode.isEmpty ? null : shipMode,
-                      items: const [
-                        DropdownMenuItem(value: 'SEA', child: Text('Sea')),
-                        DropdownMenuItem(value: 'AIR', child: Text('Air')),
-                        DropdownMenuItem(value: 'TRUCK', child: Text('Truck')),
-                        DropdownMenuItem(
-                            value: 'COURIER', child: Text('Courier')),
+                      items: [
+                        for (final m in shipModeItems)
+                          if (m.value != null) m,
                       ],
                       onChanged: (v) {
                         shipMode = v ?? '';
@@ -273,26 +284,23 @@ class _PoTablePageState extends State<PoTablePage> {
                       },
                     ),
                     _dropdown<String>(
-                      width: 180,
+                      width: 190,
                       hint: 'Sort',
                       value: sort,
                       clearable: false,
                       items: const [
-                        DropdownMenuItem(
-                            value: 'due', child: Text('Sort: next due date')),
-                        DropdownMenuItem(
-                            value: 'eta', child: Text('Sort: ETA')),
-                        DropdownMenuItem(
-                            value: 'docDate', child: Text('Sort: newest PO')),
-                        DropdownMenuItem(
-                            value: 'po', child: Text('Sort: PO number')),
-                        DropdownMenuItem(
-                            value: 'supplier', child: Text('Sort: supplier')),
-                        DropdownMenuItem(
-                            value: 'step', child: Text('Sort: step')),
-                        DropdownMenuItem(
-                            value: 'updated',
-                            child: Text('Sort: last updated')),
+                        SearchableDropdownItem(
+                            value: 'due', label: 'Sort: next due date'),
+                        SearchableDropdownItem(value: 'eta', label: 'Sort: ETA'),
+                        SearchableDropdownItem(
+                            value: 'docDate', label: 'Sort: newest PO'),
+                        SearchableDropdownItem(
+                            value: 'po', label: 'Sort: PO number'),
+                        SearchableDropdownItem(
+                            value: 'supplier', label: 'Sort: supplier'),
+                        SearchableDropdownItem(value: 'step', label: 'Sort: step'),
+                        SearchableDropdownItem(
+                            value: 'updated', label: 'Sort: last updated'),
                       ],
                       onChanged: (v) {
                         sort = v ?? 'due';
@@ -312,60 +320,6 @@ class _PoTablePageState extends State<PoTablePage> {
           ]),
         ]),
       ),
-      AnimatedSize(
-        duration: DsMotion.of(context, DsMotion.chrome),
-        child: selected.isEmpty
-            ? const SizedBox(width: double.infinity)
-            : Padding(
-                padding: const EdgeInsets.fromLTRB(22, 0, 22, 10),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: DsColors.navySoft,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: DsColors.navyBorder),
-                  ),
-                  child: Row(children: [
-                    const Icon(Icons.check_box_outlined,
-                        size: 18, color: DsColors.navyDeep),
-                    const SizedBox(width: 8),
-                    Text('${plural(selected.length, 'PO')} selected',
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: DsColors.navyDeep)),
-                    const SizedBox(width: 12),
-                    if (!sameStep)
-                      const Expanded(
-                        child: Text(
-                            'Select POs waiting at the same step to update them together',
-                            style: TextStyle(
-                                fontSize: 12, color: DsColors.navyDeep)),
-                      )
-                    else
-                      Expanded(
-                        child: Text(
-                            'All at step ${chosen.first['currentStep']} · ${chosen.first['currentStepName']}',
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 12, color: DsColors.navyDeep)),
-                      ),
-                    TextButton(
-                        onPressed: () => setState(selected.clear),
-                        child: const Text('Clear')),
-                    const SizedBox(width: 6),
-                    DsPrimaryButton(
-                      label: 'Mark step done',
-                      icon: Icons.done_all,
-                      height: 36,
-                      onPressed: sameStep && scope.canEdit && status == 'ACTIVE'
-                          ? _bulkAdvance
-                          : null,
-                    ),
-                  ]),
-                ),
-              ),
-      ),
       Expanded(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(22, 0, 22, 16),
@@ -373,35 +327,42 @@ class _PoTablePageState extends State<PoTablePage> {
             padding: EdgeInsets.zero,
             clip: true,
             color: DsColors.sheet,
-            child: MinWidthScroll(
-                minWidth: 1180,
-                child: Column(children: [
-                  _header(scope),
-                  const Divider(height: 1),
-                  Expanded(child: _body(scope)),
-                  const Divider(height: 1),
-                  Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                    child: Row(children: [
-                      Text(
-                          loading
-                              ? 'Loading…'
-                              : '${plural(total, 'PO')}${total > pageSize ? ' · page $page of ${(total / pageSize).ceil()}' : ''}',
-                          style: DsType.meta),
-                      const Spacer(),
-                      PaginationBar(
-                        page: page - 1,
-                        totalItems: total,
-                        pageSize: pageSize,
-                        onChanged: (p) {
-                          page = p + 1;
-                          unawaited(load());
-                        },
-                      ),
-                    ]),
+            // The pager sits outside the sideways scroll so it stays in view
+            // on narrow screens.
+            child: Column(children: [
+              Expanded(
+                child: MinWidthScroll(
+                    minWidth: 1120,
+                    child: Column(children: [
+                      _header(scope),
+                      const Divider(height: 1),
+                      Expanded(
+                          child: DsFitRows(
+                              rowHeight: _rowH,
+                              onFit: _onFit,
+                              child: _body(scope))),
+                    ])),
+              ),
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                child: Row(children: [
+                  Text(loading ? 'Loading…' : plural(total, 'PO'),
+                      style: DsType.meta),
+                  const Spacer(),
+                  PaginationBar(
+                    topBorder: false,
+                    page: page - 1,
+                    totalItems: total,
+                    pageSize: max(1, pageSize),
+                    onChanged: (p) {
+                      page = p + 1;
+                      unawaited(load());
+                    },
                   ),
-                ])),
+                ]),
+              ),
+            ]),
           ),
         ),
       ),
@@ -461,37 +422,34 @@ class _PoTablePageState extends State<PoTablePage> {
     required double width,
     required String hint,
     required T? value,
-    required List<DropdownMenuItem<T>> items,
+    required List<SearchableDropdownItem<T>> items,
     required ValueChanged<T?> onChanged,
     bool clearable = true,
   }) {
     return SizedBox(
       width: width,
       height: 38,
-      child: DropdownButtonFormField<T>(
-        key: ValueKey('$hint-$value-${items.length}'),
-        initialValue: items.any((i) => i.value == value) ? value : null,
-        isExpanded: true,
-        isDense: true,
+      child: SearchableDropdownField<T>(
+        value: items.any((i) => i.value == value) ? value : null,
+        dense: true,
+        dialogTitle: hint,
         decoration: dsInput(hint: hint).copyWith(
+            isDense: true,
             contentPadding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 8)),
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 10)),
         items: [
-          if (clearable)
-            DropdownMenuItem<T>(
-                value: null,
-                child:
-                    Text(hint, style: const TextStyle(color: DsColors.faint2))),
+          if (clearable) SearchableDropdownItem<T>(value: null, label: hint),
           ...items,
         ],
-        style: const TextStyle(fontSize: 12.5, color: DsColors.heading),
-        onChanged: onChanged,
+        onChanged: (v) {
+          // Choosing the selected entry again is not a change.
+          if (v != value) onChanged(v);
+        },
       ),
     );
   }
 
   // Column widths. Supplier and the step column flex; the rest are fixed.
-  static const _wCheck = 44.0;
   static const _wPo = 128.0;
   static const _wDate = 96.0;
   static const _wLines = 54.0;
@@ -501,8 +459,6 @@ class _PoTablePageState extends State<PoTablePage> {
   static const _wAct = 96.0;
 
   Widget _header(AppScope scope) {
-    final allSelected = rows.isNotEmpty &&
-        rows.every((r) => selected.contains(intFrom(r['id'])));
     Widget h(String t, double? w, {TextAlign align = TextAlign.left}) {
       final text =
           Text(t.toUpperCase(), textAlign: align, style: DsType.eyebrow);
@@ -515,24 +471,7 @@ class _PoTablePageState extends State<PoTablePage> {
       color: DsColors.subtle,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
       child: Row(children: [
-        SizedBox(
-          width: _wCheck,
-          child: scope.canEdit && status == 'ACTIVE'
-              ? Checkbox(
-                  value: allSelected,
-                  onChanged: rows.isEmpty
-                      ? null
-                      : (v) => setState(() {
-                            if (v == true) {
-                              selected
-                                  .addAll(rows.map((r) => intFrom(r['id'])!));
-                            } else {
-                              selected.clear();
-                            }
-                          }),
-                )
-              : null,
-        ),
+        const SizedBox(width: 8),
         h('PO No.', _wPo),
         h('Supplier', null),
         h('PO date', _wDate),
@@ -582,44 +521,36 @@ class _PoTablePageState extends State<PoTablePage> {
         ]),
       );
     }
-    return ListView.separated(
-      itemCount: rows.length,
-      separatorBuilder: (_, __) =>
-          const Divider(height: 1, color: DsColors.lineSoft),
-      itemBuilder: (context, i) => _row(scope, rows[i]),
-    );
+    // One page fills the table: fixed-height rows, no scrolling.
+    return Column(children: [
+      for (final r in rows)
+        Container(
+          height: _rowH,
+          decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: DsColors.lineSoft))),
+          child: _row(scope, r),
+        ),
+    ]);
   }
 
   Widget _row(AppScope scope, Map<String, dynamic> po) {
     final id = intFrom(po['id'])!;
-    final isSelected = selected.contains(id);
     final active = po['status'] == 'ACTIVE';
     return Material(
-      color: isSelected
-          ? DsColors.navySoft.withValues(alpha: .35)
-          : Colors.transparent,
+      color: Colors.transparent,
       child: InkWell(
         hoverColor: const Color(0x30ffffff),
         onTap: () async {
           await scope.openPo(id);
         },
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
+          padding: const EdgeInsets.symmetric(horizontal: 6),
           child: Row(children: [
-            SizedBox(
-              width: _wCheck,
-              child: scope.canEdit && active
-                  ? Checkbox(
-                      value: isSelected,
-                      onChanged: (v) => setState(() =>
-                          v == true ? selected.add(id) : selected.remove(id)),
-                    )
-                  : null,
-            ),
+            const SizedBox(width: 8),
             SizedBox(
               width: _wPo,
               child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('${po['poNo']}',
                         style: mono(
@@ -635,7 +566,7 @@ class _PoTablePageState extends State<PoTablePage> {
             ),
             Expanded(
               child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('${po['supplierShort'] ?? po['supplierName'] ?? '-'}',
                         maxLines: 1,
@@ -669,7 +600,7 @@ class _PoTablePageState extends State<PoTablePage> {
               width: _wDue,
               child: active
                   ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                           Text(fmtDate(po['nextDueDate']),
                               style: DsType.rowTitle),

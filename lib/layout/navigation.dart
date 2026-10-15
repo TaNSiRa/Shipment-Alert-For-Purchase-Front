@@ -73,7 +73,7 @@ class _NavReveal extends StatelessWidget {
 
 
 /// Every page of the app, in sidebar order.
-enum AppPage { dashboard, pos, roadmap, calendar, report, workflow, suppliers, materials, users, settings, profile }
+enum AppPage { dashboard, pos, roadmap, calendar, workflow, suppliers, materials, users, settings, profile }
 
 /// Title + one-line subtitle shown in the top bar for each page.
 (String, String) pageHeading(AppPage page) => switch (page) {
@@ -81,7 +81,6 @@ enum AppPage { dashboard, pos, roadmap, calendar, report, workflow, suppliers, m
       AppPage.pos => ('Shipments', 'Purchase orders — import, follow up and update each step'),
       AppPage.roadmap => ('Road Map', 'Progress of every open shipment across the 9 steps'),
       AppPage.calendar => ('Calendar', 'Due dates, completed steps and expected arrivals'),
-      AppPage.report => ('Monthly Report', 'Month-end summary of POs, arrivals and on-time performance'),
       AppPage.workflow => ('Workflow', 'The 9-step purchase process and its lead times'),
       AppPage.suppliers => ('Supplier Master', 'Suppliers and their default lead time'),
       AppPage.materials => ('Material Master', 'Materials, vendor material names and lead times'),
@@ -127,9 +126,8 @@ class SideNav extends StatelessWidget {
         ]
       ),
       (
-        'Insights',
+        'Process',
         [
-          (AppPage.report, Icons.insert_chart_outlined, 'Monthly Report', 0),
           (AppPage.workflow, Icons.account_tree_outlined, 'Workflow', 0),
         ]
       ),

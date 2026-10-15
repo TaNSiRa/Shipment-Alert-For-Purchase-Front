@@ -85,7 +85,6 @@ class TopBar extends StatelessWidget {
                 label: 'SQL', ok: health['database'] == 'ok', compact: true, description: dsSqlPillDescription),
             const SizedBox(width: 6),
           ],
-          const LiquidThemeToggle(),
           AlertsBell(alerts: alerts, onOpen: onOpenAlert, onSeeAll: onSeeAllAlerts),
           DsIconButton(icon: Icons.refresh, onTap: () => unawaited(onRefresh()), tooltip: 'Refresh'),
           if (sectionCount > 1) DsIconButton(icon: Icons.apartment, onTap: onChangeSection, tooltip: 'Change section'),
@@ -176,12 +175,18 @@ class AlertsBell extends StatelessWidget {
                   ]),
                 )
               else
+                // Not a ListView: the menu measures its content's intrinsic
+                // size, which a (lazy) viewport refuses to report — debug
+                // builds threw "RenderShrinkWrappingViewport does not support
+                // returning intrinsic dimensions" on every open.
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 380),
-                  child: ListView(
-                    shrinkWrap: true,
+                  child: SingleChildScrollView(
+                    // Its own position, not the page's PrimaryScrollController
+                    // (which the page behind already uses).
+                    primary: false,
                     padding: const EdgeInsets.symmetric(vertical: 6),
-                    children: [
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
                       for (final raw in alerts.take(40))
                         MenuItemButton(
                           onPressed: () => onOpen(Map<String, dynamic>.from(raw)),
@@ -206,7 +211,7 @@ class AlertsBell extends StatelessWidget {
                             ),
                           ),
                         ),
-                    ],
+                    ]),
                   ),
                 ),
               const Divider(height: 1),

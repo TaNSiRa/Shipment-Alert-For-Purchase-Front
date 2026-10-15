@@ -17,6 +17,10 @@ class _RoadmapPageState extends State<RoadmapPage> {
   bool loading = true;
   String? error;
   int _tick = -1;
+  // One screen = one page (RAP): as many rows as fit, paged client-side.
+  int page = 0;
+  int pageSize = 0;
+  static const _rowH = 62.0;
 
   @override
   void didChangeDependencies() {
@@ -47,6 +51,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
         rows = (r['data'] as List)
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList();
+        if (pageSize > 0) page = page.clamp(0, max(0, (rows.length - 1) ~/ pageSize));
         loading = false;
         error = null;
       });
@@ -60,14 +65,17 @@ class _RoadmapPageState extends State<RoadmapPage> {
     }
   }
 
-  static const _wPo = 230.0;
-  static const _wCell = 92.0;
-  static const _wEta = 108.0;
+  // The PO column is just wide enough for the number and a short supplier
+  // name; the step columns share the rest, so the map fits the screen
+  // without scrolling sideways (horizontal scroll only below _wCellMin).
+  static const _wPo = 150.0;
+  static const _wCellMin = 72.0;
+  static const _wEta = 96.0;
 
   @override
   Widget build(BuildContext context) {
     final scope = AppScope.of(context);
-    final tableWidth = _wPo + _wCell * steps.length + _wEta + 24;
+    final minWidth = _wPo + _wCellMin * steps.length + _wEta + 24;
     return Column(children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(22, 16, 22, 10),
@@ -78,7 +86,10 @@ class _RoadmapPageState extends State<RoadmapPage> {
               controller: search,
               onChanged: (_) {
                 _debounce?.cancel();
-                _debounce = Timer(const Duration(milliseconds: 350), load);
+                _debounce = Timer(const Duration(milliseconds: 350), () {
+                  page = 0;
+                  unawaited(load());
+                });
               },
               decoration: dsInput(
                   hint: 'Search PO, supplier, S/I no.…', icon: Icons.search),
@@ -98,6 +109,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
             ),
             onSelect: (i) {
               status = i == 0 ? 'ACTIVE' : 'COMPLETED';
+              page = 0;
               setState(() => loading = true);
               unawaited(load());
             },
@@ -122,33 +134,70 @@ class _RoadmapPageState extends State<RoadmapPage> {
                             icon: Icons.route_outlined,
                             message: 'No shipments to show')
                         : LayoutBuilder(builder: (context, box) {
-                            final w = max(box.maxWidth, tableWidth);
-                            return Scrollbar(
-                              thumbVisibility: true,
-                              notificationPredicate: (n) =>
-                                  n.metrics.axis == Axis.horizontal,
-                              child: SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: SizedBox(
-                                  width: w,
-                                  child: Column(children: [
-                                    _header(),
-                                    const Divider(height: 1),
-                                    Expanded(
-                                      child: ListView.separated(
-                                        itemCount: rows.length,
-                                        separatorBuilder: (_, __) =>
-                                            const Divider(
-                                                height: 1,
-                                                color: DsColors.lineSoft),
-                                        itemBuilder: (_, i) =>
-                                            _row(scope, rows[i]),
-                                      ),
+                            final w = max(box.maxWidth, minWidth);
+                            final cell = (w - _wPo - _wEta - 24) / max(1, steps.length);
+                            final size = max(1, pageSize);
+                            final pages = max(1, (rows.length / size).ceil());
+                            final p = page.clamp(0, pages - 1);
+                            final visible = rows.skip(p * size).take(size).toList();
+                            return Column(children: [
+                              Expanded(
+                                child: Scrollbar(
+                                  thumbVisibility: w > box.maxWidth,
+                                  notificationPredicate: (n) =>
+                                      n.metrics.axis == Axis.horizontal,
+                                  child: SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    child: SizedBox(
+                                      width: w,
+                                      child: Column(children: [
+                                        _header(cell),
+                                        const Divider(height: 1),
+                                        Expanded(
+                                          child: DsFitRows(
+                                            rowHeight: _rowH,
+                                            onFit: (fit) {
+                                              if (fit == pageSize) return;
+                                              final first = page * max(1, pageSize);
+                                              setState(() {
+                                                pageSize = fit;
+                                                page = first ~/ fit;
+                                              });
+                                            },
+                                            child: Column(children: [
+                                              for (final r in visible)
+                                                Container(
+                                                  height: _rowH,
+                                                  decoration: const BoxDecoration(
+                                                      border: Border(
+                                                          bottom: BorderSide(
+                                                              color: DsColors.lineSoft))),
+                                                  child: _row(scope, r, cell),
+                                                ),
+                                            ]),
+                                          ),
+                                        ),
+                                      ]),
                                     ),
-                                  ]),
+                                  ),
                                 ),
                               ),
-                            );
+                              const Divider(height: 1),
+                              Row(children: [
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 14),
+                                  child: Text(plural(rows.length, 'PO'), style: DsType.meta),
+                                ),
+                                const Spacer(),
+                                PaginationBar(
+                                  topBorder: false,
+                                  page: p,
+                                  totalItems: rows.length,
+                                  pageSize: size,
+                                  onChanged: (n) => setState(() => page = n),
+                                ),
+                              ]),
+                            ]);
                           }),
           ),
         ),
@@ -156,7 +205,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
     ]);
   }
 
-  Widget _header() {
+  Widget _header(double cell) {
     return Container(
       color: DsColors.subtle,
       padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
@@ -165,7 +214,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
             width: _wPo, child: Text('PURCHASE ORDER', style: DsType.eyebrow)),
         for (final s in steps)
           SizedBox(
-            width: _wCell,
+            width: cell,
             child: Tooltip(
               message: '${s['stepNo']}. ${s['name']}',
               child: Column(children: [
@@ -186,7 +235,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
     );
   }
 
-  Widget _row(AppScope scope, Map<String, dynamic> po) {
+  Widget _row(AppScope scope, Map<String, dynamic> po, double cell) {
     final stepRows = (po['steps'] as List).cast<Map>();
     final current = intFrom(po['currentStep']) ?? steps.length + 1;
     final today = todayIso();
@@ -194,7 +243,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
       onTap: () => unawaited(scope.openPo(intFrom(po['id'])!)),
       hoverColor: const Color(0x30ffffff),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+        padding: const EdgeInsets.fromLTRB(14, 0, 10, 0),
         child: Row(children: [
           SizedBox(
             width: _wPo,
@@ -203,7 +252,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
               const SizedBox(width: 9),
               Expanded(
                 child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('${po['poNo']}',
                           style: mono(
@@ -220,7 +269,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
           ),
           for (var n = 1; n <= steps.length; n++)
             SizedBox(
-              width: _wCell,
+              width: cell,
               child: _cell(
                   n,
                   stepRows.firstWhere((s) => intFrom(s['stepNo']) == n,
@@ -231,7 +280,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
             ),
           Expanded(
             child:
-                Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
               Text(fmtDate(po['etaDate']),
                   style: const TextStyle(
                       fontSize: 12.5,
@@ -276,7 +325,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
           : isCurrent
               ? 'Waiting · due ${fmtDate(due)}'
               : 'Planned ${fmtDate(due)}',
-      child: Column(children: [
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
         Row(children: [
           Expanded(
               child: Container(

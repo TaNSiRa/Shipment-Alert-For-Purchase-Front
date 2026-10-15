@@ -127,12 +127,51 @@ class Panel extends StatelessWidget {
   }
 }
 
+/// How many fixed-height rows fit in the space it is given (RAP's tables:
+/// one screen = one page, no scrolling). Reports the count through [onFit]
+/// after the frame whenever it changes, e.g. on a window resize; the child
+/// is built as usual.
+class DsFitRows extends StatefulWidget {
+  const DsFitRows({super.key, required this.rowHeight, required this.onFit, required this.child});
+  final double rowHeight;
+  final ValueChanged<int> onFit;
+  final Widget child;
+
+  @override
+  State<DsFitRows> createState() => _DsFitRowsState();
+}
+
+class _DsFitRowsState extends State<DsFitRows> {
+  int _reported = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, box) {
+      final fit = box.maxHeight.isFinite ? max(1, (box.maxHeight / widget.rowHeight).floor()) : 20;
+      if (fit != _reported) {
+        _reported = fit;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.onFit(fit);
+        });
+      }
+      return widget.child;
+    });
+  }
+}
+
 /// Prev/page-number/next bar for tables paginated at a fixed page size.
 /// [page] is 0-based; renders nothing when there's only one page.
 class PaginationBar extends StatelessWidget {
   const PaginationBar(
-      {super.key, required this.page, required this.totalItems, required this.pageSize, required this.onChanged});
+      {super.key,
+      required this.page,
+      required this.totalItems,
+      required this.pageSize,
+      required this.onChanged,
+      this.topBorder = true});
   final int page;
+  /// Off when the bar sits in a footer row that already has its own divider.
+  final bool topBorder;
   final int totalItems;
   final int pageSize;
   final ValueChanged<int> onChanged;
@@ -146,10 +185,10 @@ class PaginationBar extends StatelessWidget {
     final end = min(totalItems, start + pageSize - 1);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-      decoration: const BoxDecoration(border: Border(top: BorderSide(color: DsColors.line))),
-      child: Row(children: [
+      decoration: topBorder ? const BoxDecoration(border: Border(top: BorderSide(color: DsColors.line))) : null,
+      child: Row(mainAxisSize: topBorder ? MainAxisSize.max : MainAxisSize.min, children: [
         Text('$start–$end of $totalItems', style: const TextStyle(fontSize: 12, color: DsColors.faint)),
-        const Spacer(),
+        if (topBorder) const Spacer() else const SizedBox(width: 12),
         DsIconButton(
           icon: Icons.chevron_left,
           size: 32,

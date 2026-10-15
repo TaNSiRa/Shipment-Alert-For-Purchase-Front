@@ -353,16 +353,11 @@ Future<bool> editPoDialog(BuildContext context, Map<String, dynamic> po) async {
             Expanded(
               child: DsLabeledField(
                 label: 'Shipping mode',
-                child: DropdownButtonFormField<String>(
-                  initialValue: mode,
+                child: SearchableDropdownField<String>(
+                  value: mode,
+                  dialogTitle: 'Shipping mode',
                   decoration: dsInput(),
-                  items: const [
-                    DropdownMenuItem(value: null, child: Text('Not set')),
-                    DropdownMenuItem(value: 'SEA', child: Text('Sea')),
-                    DropdownMenuItem(value: 'AIR', child: Text('Air')),
-                    DropdownMenuItem(value: 'TRUCK', child: Text('Truck')),
-                    DropdownMenuItem(value: 'COURIER', child: Text('Courier')),
-                  ],
+                  items: shipModeItems,
                   onChanged: (v) => setState(() => mode = v),
                 ),
               ),

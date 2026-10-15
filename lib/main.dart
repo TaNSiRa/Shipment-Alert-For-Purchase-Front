@@ -30,7 +30,6 @@ part 'pages/po_import_dialog.dart';
 part 'pages/po_create_dialog.dart';
 part 'pages/roadmap_page.dart';
 part 'pages/calendar_page.dart';
-part 'pages/monthly_report_page.dart';
 part 'pages/workflow_page.dart';
 part 'pages/masters_page.dart';
 part 'pages/users_page.dart';

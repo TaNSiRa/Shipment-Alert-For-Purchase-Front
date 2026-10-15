@@ -489,7 +489,6 @@ class _AppShellState extends State<AppShell> {
       AppPage.pos => PoTablePage(args: pageArgs),
       AppPage.roadmap => const RoadmapPage(),
       AppPage.calendar => const CalendarPage(),
-      AppPage.report => const MonthlyReportPage(),
       AppPage.workflow => const WorkflowPage(),
       AppPage.suppliers => const SupplierMasterPage(),
       AppPage.materials => MaterialMasterPage(args: pageArgs),

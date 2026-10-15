@@ -46,15 +46,14 @@ class Lg {
 
   static const String _key = 'rap.liquidGlass';
 
-  /// Reads the remembered choice. Call once, before `runApp`.
+  /// The colorful theme is the only one now (the top bar's "plain grey"
+  /// toggle is gone). A browser that still remembers "off" from that toggle
+  /// is put back on. Call once, before `runApp`.
   static void restore() {
-    final saved = html.window.localStorage[_key];
-    if (saved == null) return;
-    // Assigned without going through the listener's write-back — reading and
-    // then immediately rewriting the same value is just noise in storage.
-    enabled.removeListener(_remember);
-    enabled.value = saved == '1';
-    enabled.addListener(_remember);
+    try {
+      if (html.window.localStorage[_key] == '0') html.window.localStorage.remove(_key);
+    } catch (_) {}
+    enabled.value = true;
   }
 
   static void _remember() {
@@ -140,67 +139,6 @@ class Lg {
   /// The rim band for a pane of [size]: capped so a 38 px control gets a rim
   /// proportional to itself instead of a 20 px band swallowing it whole.
   static double bandFor(double shortestSide) => min(rimBand, shortestSide * .34);
-}
-
-/// Flips [Lg.enabled] from the top bar.
-///
-/// A plain icon button on purpose — the one control in the app that must look
-/// the same in both themes, or you cannot tell what changed.
-///
-/// The flip itself is instant, but the FRAME it lands on is not: every page in
-/// the app rebuilds at once, and in a debug build that is seconds. So the tap
-/// paints a spinner first and lets a frame land before flipping, or the button
-/// just appears dead for as long as the rebuild takes.
-class LiquidThemeToggle extends StatefulWidget {
-  const LiquidThemeToggle({super.key});
-
-  @override
-  State<LiquidThemeToggle> createState() => _LiquidThemeToggleState();
-}
-
-class _LiquidThemeToggleState extends State<LiquidThemeToggle> {
-  bool _switching = false;
-
-  Future<void> _flip(bool on) async {
-    if (_switching) return;
-    setState(() => _switching = true);
-    // One frame with the spinner up, so the wait is visible rather than a dead
-    // button. `endOfFrame` resolves after that frame has actually been rasterised.
-    await WidgetsBinding.instance.endOfFrame;
-    if (!mounted) return;
-    Lg.enabled.value = !on;
-    if (mounted) setState(() => _switching = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: Lg.enabled,
-      builder: (context, on, _) {
-        if (_switching) {
-          return const SizedBox(
-            width: 38,
-            height: 38,
-            child: Center(
-              child: SizedBox(
-                width: 17,
-                height: 17,
-                child: CircularProgressIndicator(strokeWidth: 2, color: DsColors.navy),
-              ),
-            ),
-          );
-        }
-        return DsIconButton(
-          icon: on ? Icons.palette : Icons.palette_outlined,
-          color: on ? DsColors.navy : DsColors.text2,
-          tooltip: on
-              ? 'Colorful UI is ON — tap for the plain grey theme'
-              : 'Tap to make the UI colorful (glass, colour and depth instead of flat grey)',
-          onTap: () => _flip(on),
-        );
-      },
-    );
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

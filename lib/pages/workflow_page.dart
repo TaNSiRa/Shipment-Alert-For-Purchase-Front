@@ -157,7 +157,7 @@ class _WorkflowPageState extends State<WorkflowPage> {
                             color: DsColors.heading)),
                     SizedBox(height: 4),
                     Text(
-                        'Ten steps from issuing the PO to the month-end report. People enter only the PO date (N1) — '
+                        'Nine steps from issuing the PO to the goods arriving at the factory. People enter only the PO date (N1) — '
                         'every later step is just ticked when it happens, and the next due date is worked out from that real date.',
                         style: DsType.meta),
                   ]),
