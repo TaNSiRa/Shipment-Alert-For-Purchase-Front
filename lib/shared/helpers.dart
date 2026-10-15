@@ -210,7 +210,11 @@ class DueChip extends StatelessWidget {
   }
 }
 
-/// "Step 4/10 · S/I" pill with a tiny progress bar.
+/// Steps in the purchase workflow (the backend's STEP_COUNT). The month-end
+/// report is an email, not a step, so a PO is done once its goods arrive.
+const kStepCount = 9;
+
+/// "Step 4/9 · S/I" pill with a tiny progress bar.
 class StepProgress extends StatelessWidget {
   const StepProgress({super.key, required this.po, this.width = 150});
   final Map<String, dynamic> po;
@@ -218,7 +222,7 @@ class StepProgress extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final step = intFrom(po['currentStep']) ?? 1;
-    final done = step > 10;
+    final done = step > kStepCount;
     final status = '${po['status']}';
     final color = status == 'CANCELLED'
         ? DsColors.faint2
@@ -231,7 +235,7 @@ class StepProgress extends StatelessWidget {
       width: width,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
         Row(children: [
-          Text(done ? 'Done' : 'Step $step/10', style: mono(size: 10.5, weight: FontWeight.w700, color: color)),
+          Text(done ? 'Done' : 'Step $step/$kStepCount', style: mono(size: 10.5, weight: FontWeight.w700, color: color)),
           const SizedBox(width: 6),
           Expanded(
             child: Text('${po['currentStepShort'] ?? ''}',
@@ -239,7 +243,7 @@ class StepProgress extends StatelessWidget {
           ),
         ]),
         const SizedBox(height: 4),
-        DsProgressBar(value: done ? 1 : ((step - 1) / 10).clamp(0, 1).toDouble(), color: color, height: 5),
+        DsProgressBar(value: done ? 1 : ((step - 1) / kStepCount).clamp(0, 1).toDouble(), color: color, height: 5),
       ]),
     );
   }

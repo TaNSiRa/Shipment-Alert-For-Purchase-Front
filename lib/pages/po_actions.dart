@@ -1,6 +1,6 @@
 part of '../main.dart';
 
-/// The section's 10 workflow steps, cached per section and refreshed when the
+/// The section's workflow steps, cached per section and refreshed when the
 /// workflow changes (realtime tick).
 class WorkflowCache {
   static String? _section;

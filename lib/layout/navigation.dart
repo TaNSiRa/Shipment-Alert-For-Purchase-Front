@@ -79,10 +79,10 @@ enum AppPage { dashboard, pos, roadmap, calendar, report, workflow, suppliers, m
 (String, String) pageHeading(AppPage page) => switch (page) {
       AppPage.dashboard => ('Dashboard', 'Where every shipment stands today'),
       AppPage.pos => ('Shipments', 'Purchase orders — import, follow up and update each step'),
-      AppPage.roadmap => ('Road Map', 'Progress of every open shipment across the 10 steps'),
+      AppPage.roadmap => ('Road Map', 'Progress of every open shipment across the 9 steps'),
       AppPage.calendar => ('Calendar', 'Due dates, completed steps and expected arrivals'),
       AppPage.report => ('Monthly Report', 'Month-end summary of POs, arrivals and on-time performance'),
-      AppPage.workflow => ('Workflow', 'The 10-step purchase process and its lead times'),
+      AppPage.workflow => ('Workflow', 'The 9-step purchase process and its lead times'),
       AppPage.suppliers => ('Supplier Master', 'Suppliers and their default lead time'),
       AppPage.materials => ('Material Master', 'Materials, vendor material names and lead times'),
       AppPage.users => ('Manage Users', 'Accounts, roles and section access'),

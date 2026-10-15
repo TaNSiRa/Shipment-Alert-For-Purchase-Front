@@ -986,7 +986,7 @@ class _SectionsAdminState extends State<_SectionsAdmin> {
                           padding: EdgeInsets.only(top: 10),
                           child: InfoStrip(
                               text:
-                                  'A new section starts with the default 10-step workflow and empty masters. You are added as its section admin.'),
+                                  'A new section starts with the default 9-step workflow and empty masters. You are added as its section admin.'),
                         ),
                       if (error != null) ...[
                         const SizedBox(height: 10),

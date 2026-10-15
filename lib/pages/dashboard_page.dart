@@ -55,8 +55,6 @@ class _DashboardPageState extends State<DashboardPage> {
     return PageBody(children: [
       DsRise(child: _hero(scope, counts)),
       const SizedBox(height: 16),
-      DsRise(index: 1, child: _tiles(scope, counts)),
-      const SizedBox(height: 16),
       DsRise(
           index: 2, child: _pipeline(scope, (d['byStep'] as List).cast<Map>())),
       const SizedBox(height: 16),
@@ -100,17 +98,11 @@ class _DashboardPageState extends State<DashboardPage> {
     final rows = <Widget>[];
     for (var i = 0; i < children.length; i += cols) {
       final slice = children.sublist(i, min(i + cols, children.length));
-      // No IntrinsicHeight here: the chart cards measure themselves with a
-      // LayoutBuilder, which cannot report intrinsic sizes.
-      rows.add(Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        for (var j = 0; j < slice.length; j++) ...[
-          if (j > 0) const SizedBox(width: 16),
-          Expanded(child: slice[j]),
-        ],
-        for (var k = slice.length; k < cols; k++) ...[
-          const SizedBox(width: 16),
-          const Expanded(child: SizedBox())
-        ],
+      // Every card in a row as tall as the tallest one, whatever it holds —
+      // an empty list keeps its full card instead of shrinking to its title.
+      rows.add(_EqualHeightRow(gap: 16, children: [
+        ...slice,
+        for (var k = slice.length; k < cols; k++) const SizedBox(),
       ]));
       rows.add(const SizedBox(height: 16));
     }
@@ -185,71 +177,6 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
       ]),
     );
-  }
-
-  Widget _tiles(AppScope scope, Map<String, dynamic> c) {
-    final arrived = intFrom(c['arrivedThisMonth']) ?? 0;
-    final onTime = intFrom(c['arrivedOnTimeThisMonth']) ?? 0;
-    return LayoutBuilder(builder: (context, box) {
-      final perRow = box.maxWidth >= 1200
-          ? 6
-          : box.maxWidth >= 760
-              ? 3
-              : 2;
-      final w = (box.maxWidth - 12 * (perRow - 1)) / perRow;
-      return Wrap(spacing: 12, runSpacing: 12, children: [
-        MetricTile(
-            width: w,
-            icon: Icons.warning_amber_rounded,
-            label: 'Overdue',
-            value: '${c['overdue']}',
-            color: DsColors.redFg,
-            sub: 'step past its due date',
-            onTap: () => scope.navigate(AppPage.pos, args: {'due': 'OVERDUE'})),
-        MetricTile(
-            width: w,
-            icon: Icons.today_outlined,
-            label: 'Due today',
-            value: '${c['dueToday']}',
-            color: DsColors.amberFg,
-            sub: 'finish today',
-            onTap: () => scope.navigate(AppPage.pos, args: {'due': 'TODAY'})),
-        MetricTile(
-            width: w,
-            icon: Icons.schedule,
-            label: 'Due soon',
-            value: '${c['dueSoon']}',
-            color: DsColors.amberFg,
-            sub: 'next few days',
-            onTap: () => scope.navigate(AppPage.pos, args: {'due': 'SOON'})),
-        MetricTile(
-            width: w,
-            icon: Icons.warehouse_outlined,
-            label: 'Arriving this month',
-            value: '${c['arrivingThisMonth']}',
-            color: DsColors.tealFg,
-            sub: '${c['arrivingNext7']} in the next 7 days',
-            onTap: () => scope.navigate(AppPage.calendar)),
-        MetricTile(
-            width: w,
-            icon: Icons.receipt_long_outlined,
-            label: 'POs issued this month',
-            value: '${c['issuedThisMonth']}',
-            color: DsColors.navy,
-            sub: 'by PO date',
-            onTap: () => scope.navigate(AppPage.report)),
-        MetricTile(
-            width: w,
-            icon: Icons.verified_outlined,
-            label: 'Arrived this month',
-            value: '$arrived',
-            color: DsColors.greenFg,
-            sub: arrived == 0
-                ? 'none yet'
-                : '${(onTime / arrived * 100).round()}% on time',
-            onTap: () => scope.navigate(AppPage.report)),
-      ]);
-    });
   }
 
   Widget _pipeline(AppScope scope, List<Map> steps) {
@@ -354,9 +281,13 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _poList(String title, IconData icon, Color color, List<Map> items,
+  /// How many POs each dashboard list shows; "See all" opens the rest.
+  static const _listLimit = 5;
+
+  Widget _poList(String title, IconData icon, Color color, List<Map> all,
       {required String empty, required VoidCallback onAll, bool eta = false}) {
     final scope = AppScope.of(context);
+    final items = all.take(_listLimit).toList();
     return DsCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
@@ -527,4 +458,76 @@ class _DashboardPageState extends State<DashboardPage> {
       ]),
     );
   }
+}
+
+/// A row of equal-width children that are all as tall as the tallest.
+///
+/// IntrinsicHeight cannot do this here: the chart cards measure themselves
+/// with a LayoutBuilder, which cannot report an intrinsic size. This lays each
+/// child out once to find the tallest, then again at exactly that height.
+class _EqualHeightRow extends MultiChildRenderObjectWidget {
+  const _EqualHeightRow({required this.gap, required super.children});
+  final double gap;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) => _RenderEqualHeightRow(gap);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderEqualHeightRow renderObject) {
+    renderObject.gap = gap;
+  }
+}
+
+class _EqualHeightParentData extends ContainerBoxParentData<RenderBox> {}
+
+class _RenderEqualHeightRow extends RenderBox
+    with
+        ContainerRenderObjectMixin<RenderBox, _EqualHeightParentData>,
+        RenderBoxContainerDefaultsMixin<RenderBox, _EqualHeightParentData> {
+  _RenderEqualHeightRow(this._gap);
+
+  double _gap;
+  set gap(double value) {
+    if (value == _gap) return;
+    _gap = value;
+    markNeedsLayout();
+  }
+
+  @override
+  void setupParentData(RenderBox child) {
+    if (child.parentData is! _EqualHeightParentData) child.parentData = _EqualHeightParentData();
+  }
+
+  @override
+  void performLayout() {
+    final n = childCount;
+    if (n == 0) {
+      size = constraints.smallest;
+      return;
+    }
+    final width = (constraints.maxWidth - _gap * (n - 1)) / n;
+    var height = 0.0;
+    var child = firstChild;
+    while (child != null) {
+      child.layout(BoxConstraints(minWidth: width, maxWidth: width), parentUsesSize: true);
+      height = max(height, child.size.height);
+      child = childAfter(child);
+    }
+    var x = 0.0;
+    child = firstChild;
+    while (child != null) {
+      child.layout(BoxConstraints.tightFor(width: width, height: height));
+      (child.parentData! as _EqualHeightParentData).offset = Offset(x, 0);
+      x += width + _gap;
+      child = childAfter(child);
+    }
+    size = constraints.constrain(Size(constraints.maxWidth, height));
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) => defaultPaint(context, offset);
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      defaultHitTestChildren(result, position: position);
 }

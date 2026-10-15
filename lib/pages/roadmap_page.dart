@@ -1,6 +1,6 @@
 part of '../main.dart';
 
-/// "Shipment progress road map": every open PO as one row, the ten steps as
+/// "Shipment progress road map": every open PO as one row, the workflow steps as
 /// columns, each cell showing done / current / still to come.
 class RoadmapPage extends StatefulWidget {
   const RoadmapPage({super.key});
@@ -67,7 +67,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
   @override
   Widget build(BuildContext context) {
     final scope = AppScope.of(context);
-    final tableWidth = _wPo + _wCell * 10 + _wEta + 24;
+    final tableWidth = _wPo + _wCell * steps.length + _wEta + 24;
     return Column(children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(22, 16, 22, 10),
@@ -188,7 +188,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
 
   Widget _row(AppScope scope, Map<String, dynamic> po) {
     final stepRows = (po['steps'] as List).cast<Map>();
-    final current = intFrom(po['currentStep']) ?? 11;
+    final current = intFrom(po['currentStep']) ?? steps.length + 1;
     final today = todayIso();
     return InkWell(
       onTap: () => unawaited(scope.openPo(intFrom(po['id'])!)),
@@ -218,7 +218,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
               ),
             ]),
           ),
-          for (var n = 1; n <= 10; n++)
+          for (var n = 1; n <= steps.length; n++)
             SizedBox(
               width: _wCell,
               child: _cell(
@@ -307,7 +307,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
           Expanded(
               child: Container(
                   height: 2,
-                  color: n == 10
+                  color: n == steps.length
                       ? Colors.transparent
                       : (actual != null
                           ? color.withValues(alpha: .5)
