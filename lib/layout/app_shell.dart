@@ -26,6 +26,8 @@ class _AppShellState extends State<AppShell> {
   bool navCollapsed = _readPref('psa.navCollapsed') == '1';
   Map<String, dynamic> health = const {'api': 'checking', 'database': 'checking'};
   List<dynamic> alerts = const [];
+  /// Shown once on the login page (a failed Microsoft sign-in).
+  String? loginNotice;
 
   Timer? _healthTimer;
   Timer? _idleTimer;
@@ -57,7 +59,7 @@ class _AppShellState extends State<AppShell> {
     super.initState();
     unawaited(_loadHealth());
     _healthTimer = Timer.periodic(const Duration(seconds: 30), (_) => unawaited(_loadHealth()));
-    unawaited(_restoreSession());
+    unawaited(_microsoftReturnOrRestore());
   }
 
   @override
@@ -78,6 +80,44 @@ class _AppShellState extends State<AppShell> {
       if (mounted) setState(() => health = result);
     } catch (_) {
       if (mounted) setState(() => health = const {'api': 'offline', 'database': 'offline'});
+    }
+  }
+
+  /// Coming back from "Sign in with Microsoft" the page URL carries either a
+  /// one-time `ms_ticket` or an `ms_error` code. Both are taken off the address
+  /// bar at once (a reload or a bookmark must not replay them).
+  Future<void> _microsoftReturnOrRestore() async {
+    final params = Uri.base.queryParameters;
+    final ticket = params['ms_ticket'];
+    final failure = params['ms_error'];
+    if (ticket == null && failure == null) return _restoreSession();
+    try {
+      final rest = {
+        for (final e in params.entries)
+          if (e.key != 'ms_ticket' && e.key != 'ms_error') e.key: e.value,
+      };
+      final page = Uri.base;
+      // Keep the entry's state: Flutter's router keeps its own bookkeeping
+      // there and fails when it finds null.
+      html.window.history.replaceState(
+          html.window.history.state,
+          '',
+          '${page.path}${rest.isEmpty ? '' : '?${Uri(queryParameters: rest).query}'}'
+              '${page.hasFragment ? '#${page.fragment}' : ''}');
+    } catch (_) {}
+    if (failure != null) {
+      loginNotice = microsoftErrorText(failure);
+      if (mounted) setState(() => stage = _Stage.login);
+      return;
+    }
+    try {
+      _applyLogin(await api.postJson('/auth/microsoft/exchange', {'ticket': ticket}));
+    } on ApiException catch (e) {
+      loginNotice = friendlyError(e.message);
+      if (mounted) setState(() => stage = _Stage.login);
+    } catch (_) {
+      loginNotice = 'Cannot reach the server. Check that the API is running.';
+      if (mounted) setState(() => stage = _Stage.login);
     }
   }
 
@@ -108,6 +148,7 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _applyLogin(Map<String, dynamic> result) {
+    loginNotice = null;
     api.token = '${result['token']}';
     if (result['csrfToken'] != null) api.csrfToken = '${result['csrfToken']}';
     me = Map<String, dynamic>.from(result['user'] as Map);
@@ -364,7 +405,7 @@ class _AppShellState extends State<AppShell> {
           ),
         );
       case _Stage.login:
-        return LoginPage(onLogin: login, health: health);
+        return LoginPage(onLogin: login, health: health, initialError: loginNotice);
       case _Stage.consent:
         return PdpaConsentPage(
           name: '${me?['displayName'] ?? ''}',

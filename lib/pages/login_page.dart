@@ -1,9 +1,13 @@
 part of '../main.dart';
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key, required this.onLogin, required this.health});
+  const LoginPage({super.key, required this.onLogin, required this.health, this.initialError});
   final Future<String?> Function(String email, String password) onLogin;
   final Map<String, dynamic> health;
+
+  /// Why the last attempt failed when it happened off this page (coming back
+  /// from Microsoft's sign-in).
+  final String? initialError;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -15,6 +19,26 @@ class _LoginPageState extends State<LoginPage> {
   bool busy = false;
   bool obscure = true;
   String? error;
+  bool leaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    error = widget.initialError;
+  }
+
+  /// Leaves for Microsoft's sign-in page; the API brings the browser back here.
+  void signInWithMicrosoft() {
+    if (busy || leaving) return;
+    setState(() {
+      leaving = true;
+      error = null;
+    });
+    final page = Uri.base;
+    final back = '${page.scheme}://${page.authority}${page.path}';
+    html.window.location.assign(
+        '${AppConfig.apiBaseUrl}/auth/microsoft/start?returnTo=${Uri.encodeComponent(back)}');
+  }
 
   @override
   void dispose() {
@@ -176,7 +200,7 @@ class _LoginPageState extends State<LoginPage> {
               SizedBox(
                 height: 46,
                 child: FilledButton(
-                  onPressed: busy ? null : submit,
+                  onPressed: busy || leaving ? null : submit,
                   child: busy
                       ? const SizedBox(
                           width: 20,
@@ -192,6 +216,37 @@ class _LoginPageState extends State<LoginPage> {
                             ]),
                 ),
               ),
+              if (widget.health['microsoftLogin'] == true) ...[
+                const SizedBox(height: 14),
+                const Row(children: [
+                  Expanded(child: Divider()),
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 10),
+                    child: Text('or', style: DsType.metaSm),
+                  ),
+                  Expanded(child: Divider()),
+                ]),
+                const SizedBox(height: 14),
+                SizedBox(
+                  height: 46,
+                  child: OutlinedButton(
+                    onPressed: busy || leaving ? null : signInWithMicrosoft,
+                    child: leaving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2.4))
+                        : const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                                _MicrosoftMark(),
+                                SizedBox(width: 10),
+                                Text('Sign in with Microsoft',
+                                    style: TextStyle(fontSize: 14.5)),
+                              ]),
+                  ),
+                ),
+              ],
               const SizedBox(height: 22),
               Wrap(
                   spacing: 8,
@@ -217,6 +272,47 @@ class _LoginPageState extends State<LoginPage> {
                   textAlign: TextAlign.center, style: DsType.metaSm),
             ]),
       ),
+    );
+  }
+}
+
+/// What to tell someone the API sent back from a Microsoft sign-in that did
+/// not end in a session (`ms_error` on the return address).
+String microsoftErrorText(String code) {
+  switch (code) {
+    case 'NOT_REGISTERED':
+      return 'Your Microsoft account is not set up in this system. Ask your section admin to add your work email.';
+    case 'LOCKED':
+      return 'This account is locked for a few minutes after too many failed sign-ins.';
+    case 'CANCELLED':
+      return 'Microsoft sign-in was cancelled.';
+    case 'EXPIRED':
+      return 'The Microsoft sign-in took too long or was opened twice. Please try again.';
+    default:
+      return 'Microsoft sign-in did not complete. Please try again or use your password.';
+  }
+}
+
+/// The four-square mark Microsoft asks "Sign in with Microsoft" buttons to use.
+class _MicrosoftMark extends StatelessWidget {
+  const _MicrosoftMark();
+
+  @override
+  Widget build(BuildContext context) {
+    Widget sq(Color c) => Container(width: 8, height: 8, color: c);
+    return SizedBox(
+      width: 18,
+      height: 18,
+      child: Column(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          sq(const Color(0xfff25022)),
+          sq(const Color(0xff7fba00)),
+        ]),
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          sq(const Color(0xff00a4ef)),
+          sq(const Color(0xffffb900)),
+        ]),
+      ]),
     );
   }
 }
