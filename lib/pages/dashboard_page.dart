@@ -189,19 +189,29 @@ class _DashboardPageState extends State<DashboardPage> {
                 onPressed: () => scope.navigate(AppPage.roadmap),
                 child: const Text('Open road map'))),
         const SizedBox(height: 14),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            for (var i = 0; i < steps.length; i++) ...[
-              _pipeStep(scope, Map<String, dynamic>.from(steps[i]), total),
-              if (i < steps.length - 1)
-                const Padding(
-                  padding: EdgeInsets.only(top: 34),
-                  child: Icon(Icons.chevron_right,
-                      size: 18, color: DsColors.iconSoft),
-                ),
-            ],
-          ]),
+        // Centred in the card when the steps fit; scrolls sideways when not.
+        LayoutBuilder(
+          builder: (context, c) => SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: c.maxWidth),
+              child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (var i = 0; i < steps.length; i++) ...[
+                      _pipeStep(
+                          scope, Map<String, dynamic>.from(steps[i]), total),
+                      if (i < steps.length - 1)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 34),
+                          child: Icon(Icons.chevron_right,
+                              size: 18, color: DsColors.iconSoft),
+                        ),
+                    ],
+                  ]),
+            ),
+          ),
         ),
       ]),
     );
@@ -370,29 +380,38 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _trend(List<Map> trend) {
     return DsCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const DsCardTitle('Last 6 months', icon: Icons.bar_chart),
+        const DsCardTitle('Last 6 months — issued vs arrived',
+            icon: Icons.bar_chart),
         const SizedBox(height: 12),
-        GroupedBarChart(
+        // Per month: POs issued (left) and POs that reached the factory
+        // (right), the arrivals split into on time / late against the planned
+        // date of the arrival step. On time is a part of Arrived, so they are
+        // one stacked bar rather than two bars side by side.
+        ExtrudedBarChart(
           labels: [
             for (final t in trend)
               intl.DateFormat('MMM').format(DateTime.parse('${t['month']}-01'))
           ],
+          tooltipTitles: [
+            for (final t in trend)
+              intl.DateFormat('MMM yyyy')
+                  .format(DateTime.parse('${t['month']}-01'))
+          ],
+          currentIndex: trend.isEmpty ? null : trend.length - 1,
           series: [
-            (
-              'POs issued',
-              DsColors.navy,
-              [for (final t in trend) intFrom(t['issued']) ?? 0]
-            ),
-            (
-              'Arrived',
-              DsColors.tealFg,
-              [for (final t in trend) intFrom(t['arrived']) ?? 0]
-            ),
-            (
-              'On time',
-              DsColors.greenFg,
-              [for (final t in trend) intFrom(t['onTime']) ?? 0]
-            ),
+            BarSeries('POs issued', [
+              BarSegment('POs issued', DsColors.navy,
+                  [for (final t in trend) intFrom(t['issued']) ?? 0]),
+            ]),
+            BarSeries('Arrived', [
+              BarSegment('Arrived on time', DsColors.greenDot,
+                  [for (final t in trend) intFrom(t['onTime']) ?? 0]),
+              BarSegment('Arrived late', const Color(0xffe08a80), [
+                for (final t in trend)
+                  max(0,
+                      (intFrom(t['arrived']) ?? 0) - (intFrom(t['onTime']) ?? 0))
+              ]),
+            ]),
           ],
         ),
       ]),
@@ -410,18 +429,27 @@ class _DashboardPageState extends State<DashboardPage> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const DsCardTitle('Open shipments by mode',
             icon: Icons.directions_boat_outlined),
-        const SizedBox(height: 18),
-        DonutChart(
-          centerLabel: 'open',
-          slices: [
-            for (final e in modes.entries)
-              (
-                e.key == 'UNKNOWN' ? 'Not set' : shipModeLabel(e.key),
-                colors[e.key] ?? DsColors.faint2,
-                intFrom(e.value) ?? 0
-              ),
-          ],
-        ),
+        const SizedBox(height: 8),
+        if (modes.values.every((v) => (intFrom(v) ?? 0) <= 0))
+          const Padding(
+              padding: EdgeInsets.all(20),
+              child: Text('No open shipments', style: DsType.meta))
+        else
+          SizedBox(
+            height: 236,
+            width: double.infinity,
+            child: RaisedDonut(
+              caption: 'open',
+              slices: [
+                for (final e in modes.entries)
+                  DonutSlice(
+                    e.key == 'UNKNOWN' ? 'Not set' : shipModeLabel(e.key),
+                    intFrom(e.value) ?? 0,
+                    colors[e.key] ?? DsColors.faint2,
+                  ),
+              ],
+            ),
+          ),
       ]),
     );
   }

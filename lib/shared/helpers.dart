@@ -223,7 +223,7 @@ const shipModeItems = [
 /// report is an email, not a step, so a PO is done once its goods arrive.
 const kStepCount = 9;
 
-/// "Step 4/9 · S/I" pill with a tiny progress bar.
+/// "3/9 next: S/I" (steps done, next step) with a tiny progress bar.
 class StepProgress extends StatelessWidget {
   const StepProgress({super.key, required this.po, this.width = 150});
   final Map<String, dynamic> po;
@@ -243,13 +243,17 @@ class StepProgress extends StatelessWidget {
     return SizedBox(
       width: width,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        // The count is steps DONE, the same thing the bar fills to; the name
+        // after it is the step the PO is waiting at.
         Row(children: [
-          Text(done ? 'Done' : 'Step $step/$kStepCount', style: mono(size: 10.5, weight: FontWeight.w700, color: color)),
+          Text(done ? 'Done $kStepCount/$kStepCount' : '${step - 1}/$kStepCount',
+              style: mono(size: 10.5, weight: FontWeight.w700, color: color)),
           const SizedBox(width: 6),
-          Expanded(
-            child: Text('${po['currentStepShort'] ?? ''}',
-                maxLines: 1, overflow: TextOverflow.ellipsis, style: DsType.metaSm),
-          ),
+          if (!done)
+            Expanded(
+              child: Text('next: ${po['currentStepShort'] ?? ''}',
+                  maxLines: 1, overflow: TextOverflow.ellipsis, style: DsType.metaSm),
+            ),
         ]),
         const SizedBox(height: 4),
         DsProgressBar(value: done ? 1 : ((step - 1) / kStepCount).clamp(0, 1).toDouble(), color: color, height: 5),
