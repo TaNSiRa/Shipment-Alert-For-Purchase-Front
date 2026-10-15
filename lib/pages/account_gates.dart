@@ -1,0 +1,336 @@
+part of '../main.dart';
+
+const String kPasswordRuleHint =
+    'At least 8 characters, with a letter and a number';
+
+/// Client-side copy of the server rule, so the form can say what is wrong
+/// before the round trip. The server still decides.
+String? passwordPolicyProblem(String password) {
+  if (password.length < 8) return 'At least 8 characters';
+  if (password.length > 128) return 'At most 128 characters';
+  if (password.trim() != password) return 'No spaces at the start or end';
+  if (!RegExp(r'[A-Za-z]').hasMatch(password)) {
+    return 'Needs at least one letter';
+  }
+  if (!RegExp(r'[0-9]').hasMatch(password)) return 'Needs at least one number';
+  return null;
+}
+
+class PdpaConsentPage extends StatelessWidget {
+  const PdpaConsentPage({
+    super.key,
+    required this.name,
+    required this.onAccept,
+    required this.onDecline,
+    this.waitingForPassword = false,
+  });
+  final String name;
+  final Future<void> Function() onAccept;
+  final Future<void> Function() onDecline;
+  final bool waitingForPassword;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: DsAmbient(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: DsEnter(
+                child: DsCard(
+                  padding: const EdgeInsets.fromLTRB(32, 30, 32, 26),
+                  radius: 22,
+                  child: waitingForPassword
+                      ? const Padding(
+                          padding: EdgeInsets.all(30),
+                          child: Center(
+                              child: Text('Setting up your account…',
+                                  style: DsType.meta)),
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                              Row(children: [
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                      color: DsColors.navySoft,
+                                      borderRadius: BorderRadius.circular(13)),
+                                  child: const Icon(Icons.privacy_tip_outlined,
+                                      color: DsColors.navyDeep),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text('Welcome, $name',
+                                            style: DsType.pageTitle),
+                                        const Text(
+                                            'Privacy notice (PDPA) — please read before continuing',
+                                            style: DsType.meta),
+                                      ]),
+                                ),
+                              ]),
+                              const SizedBox(height: 20),
+                              Container(
+                                constraints:
+                                    const BoxConstraints(maxHeight: 300),
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: DsColors.subtle,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border:
+                                      Border.all(color: DsColors.cardBorder),
+                                ),
+                                child: const SingleChildScrollView(
+                                    child: Text(_pdpaText, style: DsType.body)),
+                              ),
+                              const SizedBox(height: 20),
+                              Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    DsOutlineButton(
+                                        label: 'Decline and sign out',
+                                        height: 42,
+                                        onPressed: () =>
+                                            unawaited(onDecline())),
+                                    const SizedBox(width: 10),
+                                    DsPrimaryButton(
+                                        label: 'I agree',
+                                        icon: Icons.check,
+                                        height: 42,
+                                        onPressed: () => unawaited(onAccept())),
+                                  ]),
+                            ]),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+const String _pdpaText = '''
+Thai Parkerizing Co., Ltd. ("the Company") uses the Purchase Shipment Alert system to follow up imported purchase orders.
+
+Personal data we keep about you
+• Your name, work email, employee number, department, position and phone number, and an optional profile picture.
+• What you do in the system: sign-ins (date, time, IP address, browser), and the purchase orders and steps you create or update.
+
+Why
+• To let you sign in and to control what you may see and change.
+• To send the daily shipment email and security alerts to your work email.
+• To keep an audit trail of changes to purchase data, as required by internal control.
+
+Who can see it
+• Members of your purchasing section and the system administrators. It is not shared outside the Company.
+
+How long
+• For as long as you have an account, and audit records for the period required by Company policy.
+
+Your rights (PDPA B.E. 2562)
+• You may ask to see, correct or delete your personal data, or withdraw this consent, by contacting the system administrator (Automation Department). Withdrawing consent means you can no longer use the system.
+
+ข้อมูลส่วนบุคคล: บริษัทฯ เก็บชื่อ อีเมล รหัสพนักงาน แผนก และประวัติการใช้งานระบบ เพื่อใช้ในการเข้าสู่ระบบ ส่งอีเมลแจ้งเตือน และตรวจสอบย้อนหลังเท่านั้น โดยไม่เปิดเผยต่อบุคคลภายนอก ท่านสามารถขอดู แก้ไข หรือลบข้อมูลได้ที่ผู้ดูแลระบบ''';
+
+/// The mandatory "choose your own password" step for a new account or after
+/// an admin reset. Returns the new {token, csrfToken}, or null to sign out.
+Future<Map<String, dynamic>?> showFirstPasswordDialog(
+    BuildContext context, ApiClient api) {
+  final pass = TextEditingController();
+  final confirm = TextEditingController();
+  String? error;
+  bool busy = false;
+  return showGlassDialog<Map<String, dynamic>>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => StatefulBuilder(builder: (ctx, setState) {
+      Future<void> submit() async {
+        final problem = passwordPolicyProblem(pass.text);
+        if (problem != null) return setState(() => error = problem);
+        if (pass.text != confirm.text) {
+          return setState(() => error = 'The two passwords do not match');
+        }
+        setState(() {
+          busy = true;
+          error = null;
+        });
+        try {
+          final result = await api
+              .postJson('/auth/first-password', {'newPassword': pass.text});
+          if (ctx.mounted) Navigator.pop(ctx, result);
+        } on ApiException catch (e) {
+          setState(() {
+            busy = false;
+            error = friendlyError(e.message);
+          });
+        }
+      }
+
+      return PopScope(
+        canPop: false,
+        child: AppDialog(
+          title: 'Choose your own password',
+          subtitle: 'Your account was set up with a temporary password',
+          icon: Icons.key_outlined,
+          width: 460,
+          body:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const InfoStrip(
+                text:
+                    'For your security, set a password only you know before using the system. $kPasswordRuleHint.'),
+            const SizedBox(height: 16),
+            DsLabeledField(
+              label: 'New password',
+              child: TextField(
+                  controller: pass,
+                  obscureText: true,
+                  autofocus: true,
+                  decoration: dsInput(icon: Icons.lock_outline)),
+            ),
+            const SizedBox(height: 12),
+            DsLabeledField(
+              label: 'Confirm new password',
+              child: TextField(
+                controller: confirm,
+                obscureText: true,
+                onSubmitted: (_) => submit(),
+                decoration: dsInput(icon: Icons.lock_outline, errorText: error),
+              ),
+            ),
+          ]),
+          actions: [
+            DsOutlineButton(
+                label: 'Sign out',
+                height: 40,
+                onPressed: busy ? null : () => Navigator.pop(ctx)),
+            DsPrimaryButton(
+                label: busy ? 'Saving…' : 'Save password',
+                height: 40,
+                onPressed: busy ? null : submit),
+          ],
+        ),
+      );
+    }),
+  );
+}
+
+class SectionPickerPage extends StatelessWidget {
+  const SectionPickerPage(
+      {super.key,
+      required this.me,
+      required this.onPick,
+      required this.onLogout});
+  final Map<String, dynamic> me;
+  final void Function(Map<String, dynamic> section) onPick;
+  final Future<void> Function() onLogout;
+
+  @override
+  Widget build(BuildContext context) {
+    final sections = (me['sections'] as List? ?? const []).cast<Map>();
+    return Scaffold(
+      body: DsAmbient(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 720),
+              child: DsEnter(
+                child: DsCard(
+                  padding: const EdgeInsets.fromLTRB(30, 28, 30, 24),
+                  radius: 22,
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          UserAvatar(user: me, size: 42, radius: 12),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                      'Welcome back, ${me['displayName'] ?? ''}',
+                                      style: DsType.pageTitle),
+                                  const Text(
+                                      'Choose the purchasing section to open',
+                                      style: DsType.meta),
+                                ]),
+                          ),
+                          DsOutlineButton(
+                              label: 'Sign out',
+                              icon: Icons.logout,
+                              height: 38,
+                              onPressed: () => unawaited(onLogout())),
+                        ]),
+                        const SizedBox(height: 20),
+                        if (sections.isEmpty)
+                          const InfoStrip(
+                            icon: Icons.lock_outline,
+                            color: DsColors.amberFg,
+                            text:
+                                'Your account is not a member of any section yet. Ask your section admin to add you.',
+                          )
+                        else
+                          Wrap(spacing: 14, runSpacing: 14, children: [
+                            for (var i = 0; i < sections.length; i++)
+                              DsRise(
+                                index: i,
+                                child: SizedBox(
+                                  width: 316,
+                                  child: DsHoverLift(
+                                    onTap: () => onPick(
+                                        Map<String, dynamic>.from(sections[i])),
+                                    child: DsCard(
+                                      padding: const EdgeInsets.all(18),
+                                      child: Row(children: [
+                                        Container(
+                                          width: 44,
+                                          height: 44,
+                                          decoration: BoxDecoration(
+                                              color: DsColors.navySoft,
+                                              borderRadius:
+                                                  BorderRadius.circular(13)),
+                                          child: const Icon(
+                                              Icons.inventory_2_outlined,
+                                              color: DsColors.navyDeep),
+                                        ),
+                                        const SizedBox(width: 14),
+                                        Expanded(
+                                          child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text('${sections[i]['name']}',
+                                                    style: DsType.cardTitle),
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  '${sections[i]['activePos'] ?? 0} open · ${sections[i]['overduePos'] ?? 0} overdue',
+                                                  style: DsType.meta,
+                                                ),
+                                              ]),
+                                        ),
+                                        DsTag('${sections[i]['code']}'),
+                                      ]),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ]),
+                      ]),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

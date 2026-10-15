@@ -1,0 +1,789 @@
+part of '../main.dart';
+
+class PoTablePage extends StatefulWidget {
+  const PoTablePage({super.key, this.args});
+
+  /// Preset filters when another page links here (e.g. {'due': 'OVERDUE'}).
+  final Map<String, dynamic>? args;
+
+  @override
+  State<PoTablePage> createState() => _PoTablePageState();
+}
+
+class _PoTablePageState extends State<PoTablePage> {
+  final search = TextEditingController();
+  Timer? _debounce;
+  String status = 'ACTIVE';
+  String due = '';
+  int? step;
+  int? supplierId;
+  String shipMode = '';
+  String sort = 'due';
+  int page = 1;
+  static const pageSize = 50;
+
+  List<Map<String, dynamic>> rows = [];
+  int total = 0;
+  bool loading = true;
+  String? error;
+  final Set<int> selected = {};
+  List<Map<String, dynamic>> steps = [];
+  List<Map<String, dynamic>> suppliers = [];
+  int _tick = -1;
+
+  @override
+  void initState() {
+    super.initState();
+    final a = widget.args ?? const {};
+    due = '${a['due'] ?? ''}';
+    step = intFrom(a['step']);
+    supplierId = intFrom(a['supplierId']);
+    if (a['status'] != null) status = '${a['status']}';
+    if (a['q'] != null) search.text = '${a['q']}';
+    if (a['sort'] != null) sort = '${a['sort']}';
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final tick = AppScope.of(context).refreshTick;
+    if (tick != _tick) {
+      final first = _tick == -1;
+      _tick = tick;
+      if (first) unawaited(_loadLookups());
+      unawaited(load(quiet: !first));
+    }
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    search.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadLookups() async {
+    final api = AppScope.read(context).api;
+    try {
+      final s = await WorkflowCache.steps(context);
+      final lookup = await api.getJson('/masters/lookup');
+      if (!mounted) return;
+      setState(() {
+        steps = s;
+        suppliers = (lookup['suppliers'] as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+      });
+    } catch (_) {}
+  }
+
+  Map<String, dynamic> get _query => {
+        'status': status,
+        'q': search.text.trim(),
+        'due': due,
+        'step': step,
+        'supplierId': supplierId,
+        'shipMode': shipMode,
+        'sort': sort,
+      };
+
+  Future<void> load({bool quiet = false}) async {
+    final api = AppScope.read(context).api;
+    if (!quiet) setState(() => loading = true);
+    try {
+      final result = await api.getJson(
+          '/pos${qs({..._query, 'page': page, 'pageSize': pageSize})}');
+      if (!mounted) return;
+      final data = (result['data'] as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+      setState(() {
+        rows = data;
+        total = intFrom(result['total']) ?? 0;
+        loading = false;
+        error = null;
+        selected.removeWhere((id) => !data.any((r) => intFrom(r['id']) == id));
+      });
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          loading = false;
+          error = friendlyError(e.message);
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          loading = false;
+          error = 'Could not load shipments';
+        });
+      }
+    }
+  }
+
+  void _filterChanged() {
+    page = 1;
+    selected.clear();
+    unawaited(load());
+  }
+
+  void _onSearch(String _) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 350), _filterChanged);
+  }
+
+  Future<void> _import() async {
+    final changed = await showPoImportDialog(context);
+    if (changed) unawaited(load(quiet: true));
+  }
+
+  Future<void> _create() async {
+    final id = await showPoCreateDialog(context);
+    if (id != null) {
+      unawaited(load(quiet: true));
+      if (mounted) unawaited(AppScope.read(context).openPo(id));
+    }
+  }
+
+  Future<void> _bulkAdvance() async {
+    final chosen =
+        rows.where((r) => selected.contains(intFrom(r['id']))).toList();
+    if (await showAdvanceDialog(context, chosen)) {
+      selected.clear();
+      unawaited(load(quiet: true));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = AppScope.of(context);
+    final width = MediaQuery.of(context).size.width;
+    final chosen =
+        rows.where((r) => selected.contains(intFrom(r['id']))).toList();
+    final sameStep = chosen.isNotEmpty &&
+        chosen.every((r) => r['currentStep'] == chosen.first['currentStep']);
+    return Column(children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(22, 16, 22, 10),
+        child: Column(children: [
+          Row(children: [
+            Expanded(
+              child: Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: width < 1200 ? 260 : 340,
+                      child: TextField(
+                        controller: search,
+                        onChanged: _onSearch,
+                        decoration: dsInput(
+                          hint: 'Search PO, supplier, material, S/I no.…',
+                          icon: Icons.search,
+                          suffix: search.text.isEmpty
+                              ? null
+                              : IconButton(
+                                  icon: const Icon(Icons.close, size: 17),
+                                  onPressed: () {
+                                    search.clear();
+                                    _filterChanged();
+                                  }),
+                        ),
+                      ),
+                    ),
+                    _statusSegment(),
+                  ]),
+            ),
+            if (scope.canEdit) ...[
+              const SizedBox(width: 10),
+              DsOutlineButton(
+                  label: 'New PO',
+                  icon: Icons.add,
+                  height: 40,
+                  onPressed: _create),
+              const SizedBox(width: 8),
+              DsPrimaryButton(
+                  label: 'Import Excel',
+                  icon: Icons.upload_file,
+                  height: 40,
+                  onPressed: _import),
+            ],
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    _dueChip('', 'All', null),
+                    _dueChip('OVERDUE', 'Overdue', DsColors.redFg),
+                    _dueChip('TODAY', 'Due today', DsColors.amberFg),
+                    _dueChip('SOON', 'Due soon', DsColors.amberFg),
+                    const SizedBox(width: 6),
+                    _dropdown<int>(
+                      width: 210,
+                      hint: 'All steps',
+                      value: step,
+                      items: [
+                        for (final s in steps
+                            .where((s) => (intFrom(s['stepNo']) ?? 0) >= 2))
+                          DropdownMenuItem(
+                              value: intFrom(s['stepNo']),
+                              child: Text('${s['stepNo']}. ${s['shortName']}',
+                                  overflow: TextOverflow.ellipsis)),
+                      ],
+                      onChanged: (v) {
+                        step = v;
+                        _filterChanged();
+                      },
+                    ),
+                    _dropdown<int>(
+                      width: 210,
+                      hint: 'All suppliers',
+                      value: supplierId,
+                      items: [
+                        for (final s in suppliers)
+                          DropdownMenuItem(
+                              value: intFrom(s['id']),
+                              child: Text('${s['shortName'] ?? s['name']}',
+                                  overflow: TextOverflow.ellipsis)),
+                      ],
+                      onChanged: (v) {
+                        supplierId = v;
+                        _filterChanged();
+                      },
+                    ),
+                    _dropdown<String>(
+                      width: 130,
+                      hint: 'All modes',
+                      value: shipMode.isEmpty ? null : shipMode,
+                      items: const [
+                        DropdownMenuItem(value: 'SEA', child: Text('Sea')),
+                        DropdownMenuItem(value: 'AIR', child: Text('Air')),
+                        DropdownMenuItem(value: 'TRUCK', child: Text('Truck')),
+                        DropdownMenuItem(
+                            value: 'COURIER', child: Text('Courier')),
+                      ],
+                      onChanged: (v) {
+                        shipMode = v ?? '';
+                        _filterChanged();
+                      },
+                    ),
+                    _dropdown<String>(
+                      width: 180,
+                      hint: 'Sort',
+                      value: sort,
+                      clearable: false,
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'due', child: Text('Sort: next due date')),
+                        DropdownMenuItem(
+                            value: 'eta', child: Text('Sort: ETA')),
+                        DropdownMenuItem(
+                            value: 'docDate', child: Text('Sort: newest PO')),
+                        DropdownMenuItem(
+                            value: 'po', child: Text('Sort: PO number')),
+                        DropdownMenuItem(
+                            value: 'supplier', child: Text('Sort: supplier')),
+                        DropdownMenuItem(
+                            value: 'step', child: Text('Sort: step')),
+                        DropdownMenuItem(
+                            value: 'updated',
+                            child: Text('Sort: last updated')),
+                      ],
+                      onChanged: (v) {
+                        sort = v ?? 'due';
+                        _filterChanged();
+                      },
+                    ),
+                  ]),
+            ),
+            DsIconButton(
+              icon: Icons.download_outlined,
+              tooltip: 'Export this list to Excel',
+              onTap: () => unawaited(downloadFromApi(
+                  context,
+                  '/pos/export${qs(_query)}',
+                  'purchase-shipments-${todayIso()}.xlsx')),
+            ),
+          ]),
+        ]),
+      ),
+      AnimatedSize(
+        duration: DsMotion.of(context, DsMotion.chrome),
+        child: selected.isEmpty
+            ? const SizedBox(width: double.infinity)
+            : Padding(
+                padding: const EdgeInsets.fromLTRB(22, 0, 22, 10),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: DsColors.navySoft,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: DsColors.navyBorder),
+                  ),
+                  child: Row(children: [
+                    const Icon(Icons.check_box_outlined,
+                        size: 18, color: DsColors.navyDeep),
+                    const SizedBox(width: 8),
+                    Text('${plural(selected.length, 'PO')} selected',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: DsColors.navyDeep)),
+                    const SizedBox(width: 12),
+                    if (!sameStep)
+                      const Expanded(
+                        child: Text(
+                            'Select POs waiting at the same step to update them together',
+                            style: TextStyle(
+                                fontSize: 12, color: DsColors.navyDeep)),
+                      )
+                    else
+                      Expanded(
+                        child: Text(
+                            'All at step ${chosen.first['currentStep']} · ${chosen.first['currentStepName']}',
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 12, color: DsColors.navyDeep)),
+                      ),
+                    TextButton(
+                        onPressed: () => setState(selected.clear),
+                        child: const Text('Clear')),
+                    const SizedBox(width: 6),
+                    DsPrimaryButton(
+                      label: 'Mark step done',
+                      icon: Icons.done_all,
+                      height: 36,
+                      onPressed: sameStep && scope.canEdit && status == 'ACTIVE'
+                          ? _bulkAdvance
+                          : null,
+                    ),
+                  ]),
+                ),
+              ),
+      ),
+      Expanded(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 0, 22, 16),
+          child: DsCard(
+            padding: EdgeInsets.zero,
+            clip: true,
+            color: DsColors.sheet,
+            child: MinWidthScroll(
+                minWidth: 1180,
+                child: Column(children: [
+                  _header(scope),
+                  const Divider(height: 1),
+                  Expanded(child: _body(scope)),
+                  const Divider(height: 1),
+                  Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    child: Row(children: [
+                      Text(
+                          loading
+                              ? 'Loading…'
+                              : '${plural(total, 'PO')}${total > pageSize ? ' · page $page of ${(total / pageSize).ceil()}' : ''}',
+                          style: DsType.meta),
+                      const Spacer(),
+                      PaginationBar(
+                        page: page - 1,
+                        totalItems: total,
+                        pageSize: pageSize,
+                        onChanged: (p) {
+                          page = p + 1;
+                          unawaited(load());
+                        },
+                      ),
+                    ]),
+                  ),
+                ])),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  Widget _statusSegment() {
+    const options = [
+      ('ACTIVE', 'Open'),
+      ('COMPLETED', 'Completed'),
+      ('CANCELLED', 'Cancelled')
+    ];
+    final index = options.indexWhere((o) => o.$1 == status);
+    return DsSegmented(
+      selected: index < 0 ? 0 : index,
+      length: options.length,
+      itemBuilder: (context, i, t) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        child: Text(options[i].$2,
+            style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: Color.lerp(DsColors.muted, DsColors.navyDeep, t))),
+      ),
+      onSelect: (i) {
+        status = options[i].$1;
+        if (status != 'ACTIVE') due = '';
+        _filterChanged();
+      },
+    );
+  }
+
+  Widget _dueChip(String value, String label, Color? color) {
+    final active = due == value;
+    return ChoiceChip(
+      label: Text(label),
+      selected: active,
+      showCheckmark: false,
+      avatar: color == null ? null : DsDot(color, size: 8),
+      labelStyle: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: active ? DsColors.navyDeep : DsColors.text2),
+      selectedColor: DsColors.navySoft,
+      side:
+          BorderSide(color: active ? DsColors.navyBorder : DsColors.cardBorder),
+      onSelected: status != 'ACTIVE' && value.isNotEmpty
+          ? null
+          : (_) {
+              due = value;
+              _filterChanged();
+            },
+    );
+  }
+
+  Widget _dropdown<T>({
+    required double width,
+    required String hint,
+    required T? value,
+    required List<DropdownMenuItem<T>> items,
+    required ValueChanged<T?> onChanged,
+    bool clearable = true,
+  }) {
+    return SizedBox(
+      width: width,
+      height: 38,
+      child: DropdownButtonFormField<T>(
+        key: ValueKey('$hint-$value-${items.length}'),
+        initialValue: items.any((i) => i.value == value) ? value : null,
+        isExpanded: true,
+        isDense: true,
+        decoration: dsInput(hint: hint).copyWith(
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 8)),
+        items: [
+          if (clearable)
+            DropdownMenuItem<T>(
+                value: null,
+                child:
+                    Text(hint, style: const TextStyle(color: DsColors.faint2))),
+          ...items,
+        ],
+        style: const TextStyle(fontSize: 12.5, color: DsColors.heading),
+        onChanged: onChanged,
+      ),
+    );
+  }
+
+  // Column widths. Supplier and the step column flex; the rest are fixed.
+  static const _wCheck = 44.0;
+  static const _wPo = 128.0;
+  static const _wDate = 96.0;
+  static const _wLines = 54.0;
+  static const _wMode = 78.0;
+  static const _wDue = 150.0;
+  static const _wEta = 100.0;
+  static const _wAct = 96.0;
+
+  Widget _header(AppScope scope) {
+    final allSelected = rows.isNotEmpty &&
+        rows.every((r) => selected.contains(intFrom(r['id'])));
+    Widget h(String t, double? w, {TextAlign align = TextAlign.left}) {
+      final text =
+          Text(t.toUpperCase(), textAlign: align, style: DsType.eyebrow);
+      return w == null
+          ? Expanded(child: text)
+          : SizedBox(width: w, child: text);
+    }
+
+    return Container(
+      color: DsColors.subtle,
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+      child: Row(children: [
+        SizedBox(
+          width: _wCheck,
+          child: scope.canEdit && status == 'ACTIVE'
+              ? Checkbox(
+                  value: allSelected,
+                  onChanged: rows.isEmpty
+                      ? null
+                      : (v) => setState(() {
+                            if (v == true) {
+                              selected
+                                  .addAll(rows.map((r) => intFrom(r['id'])!));
+                            } else {
+                              selected.clear();
+                            }
+                          }),
+                )
+              : null,
+        ),
+        h('PO No.', _wPo),
+        h('Supplier', null),
+        h('PO date', _wDate),
+        h('Lines', _wLines),
+        h('Mode', _wMode),
+        const SizedBox(width: 12),
+        SizedBox(width: 190, child: Text('PROGRESS', style: DsType.eyebrow)),
+        h('Next due', _wDue),
+        h('ETA', _wEta),
+        h('', _wAct),
+      ]),
+    );
+  }
+
+  Widget _body(AppScope scope) {
+    if (loading && rows.isEmpty) return const DsSkeletonList(rows: 8);
+    if (error != null) {
+      return Center(
+          child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: ErrorPanel(message: error!, onRetry: load)));
+    }
+    if (rows.isEmpty) {
+      final filtered = search.text.isNotEmpty ||
+          due.isNotEmpty ||
+          step != null ||
+          supplierId != null ||
+          shipMode.isNotEmpty;
+      return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          DsEmptyState(
+            icon: filtered
+                ? Icons.filter_alt_off_outlined
+                : Icons.inventory_2_outlined,
+            message: filtered
+                ? 'No PO matches these filters'
+                : status == 'ACTIVE'
+                    ? 'No open shipments yet'
+                    : 'Nothing here',
+          ),
+          if (!filtered && status == 'ACTIVE' && scope.canEdit)
+            DsPrimaryButton(
+                label: 'Import the SAP Excel',
+                icon: Icons.upload_file,
+                height: 40,
+                onPressed: _import),
+        ]),
+      );
+    }
+    return ListView.separated(
+      itemCount: rows.length,
+      separatorBuilder: (_, __) =>
+          const Divider(height: 1, color: DsColors.lineSoft),
+      itemBuilder: (context, i) => _row(scope, rows[i]),
+    );
+  }
+
+  Widget _row(AppScope scope, Map<String, dynamic> po) {
+    final id = intFrom(po['id'])!;
+    final isSelected = selected.contains(id);
+    final active = po['status'] == 'ACTIVE';
+    return Material(
+      color: isSelected
+          ? DsColors.navySoft.withValues(alpha: .35)
+          : Colors.transparent,
+      child: InkWell(
+        hoverColor: const Color(0x30ffffff),
+        onTap: () async {
+          await scope.openPo(id);
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
+          child: Row(children: [
+            SizedBox(
+              width: _wCheck,
+              child: scope.canEdit && active
+                  ? Checkbox(
+                      value: isSelected,
+                      onChanged: (v) => setState(() =>
+                          v == true ? selected.add(id) : selected.remove(id)),
+                    )
+                  : null,
+            ),
+            SizedBox(
+              width: _wPo,
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('${po['poNo']}',
+                        style: mono(
+                            size: 12.5,
+                            weight: FontWeight.w700,
+                            color: DsColors.heading)),
+                    if ('${po['shipmentRef'] ?? ''}'.isNotEmpty)
+                      Text('${po['shipmentRef']}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: DsType.metaSm),
+                  ]),
+            ),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('${po['supplierShort'] ?? po['supplierName'] ?? '-'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: DsType.rowTitle),
+                    Text(
+                        '${po['supplierCode'] ?? ''}${(po['remark'] ?? '').toString().isNotEmpty ? ' · ${po['remark']}' : ''}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: DsType.metaSm),
+                  ]),
+            ),
+            SizedBox(
+                width: _wDate,
+                child: Text(fmtDate(po['documentDate']), style: DsType.meta)),
+            SizedBox(
+                width: _wLines,
+                child: Text('${po['itemCount']}', style: mono(size: 12))),
+            SizedBox(
+                width: _wMode,
+                child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: ShipModeTag(mode: po['shipMode']))),
+            const SizedBox(width: 12),
+            SizedBox(
+                width: 190,
+                child: Padding(
+                    padding: const EdgeInsets.only(right: 14),
+                    child: StepProgress(po: po))),
+            SizedBox(
+              width: _wDue,
+              child: active
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                          Text(fmtDate(po['nextDueDate']),
+                              style: DsType.rowTitle),
+                          const SizedBox(height: 3),
+                          DueChip(po: po, dense: true),
+                        ])
+                  : DueChip(po: po, dense: true),
+            ),
+            SizedBox(
+              width: _wEta,
+              child: Text(fmtDate(po['etaDate']),
+                  style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: DsColors.navyDeep)),
+            ),
+            SizedBox(
+              width: _wAct,
+              child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                if (active && scope.canEdit)
+                  Tooltip(
+                    message: 'Mark "${po['currentStepShort']}" done',
+                    child: IconButton.filledTonal(
+                      style: IconButton.styleFrom(
+                          backgroundColor: DsColors.greenBg,
+                          foregroundColor: DsColors.greenFg,
+                          minimumSize: const Size(34, 34)),
+                      icon: const Icon(Icons.check, size: 18),
+                      onPressed: () async {
+                        if (await showAdvanceDialog(context, [po])) {
+                          unawaited(load(quiet: true));
+                        }
+                      },
+                    ),
+                  ),
+                _rowMenu(scope, po),
+              ]),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _rowMenu(AppScope scope, Map<String, dynamic> po) {
+    final active = po['status'] == 'ACTIVE';
+    final cancelled = po['status'] == 'CANCELLED';
+    final step = intFrom(po['currentStep']) ?? 2;
+    return PopupMenuButton<String>(
+      tooltip: 'More',
+      icon: const Icon(Icons.more_vert, size: 19, color: DsColors.icon),
+      onSelected: (v) async {
+        bool changed = false;
+        switch (v) {
+          case 'open':
+            await scope.openPo(intFrom(po['id'])!);
+          case 'edit':
+            changed = await editPoDialog(context, po);
+          case 'undo':
+            await WorkflowCache.steps(context);
+            if (mounted) changed = await undoLastStep(context, po);
+          case 'cancel':
+            changed = await cancelPoDialog(context, po);
+          case 'reopen':
+            changed = await reopenPo(context, po);
+          case 'delete':
+            changed = await deletePo(context, po);
+        }
+        if (changed) unawaited(load(quiet: true));
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(
+            value: 'open',
+            child: ListTile(
+                dense: true,
+                leading: Icon(Icons.open_in_new, size: 18),
+                title: Text('Open details'))),
+        if (scope.canEdit && !cancelled)
+          const PopupMenuItem(
+              value: 'edit',
+              child: ListTile(
+                  dense: true,
+                  leading: Icon(Icons.edit_outlined, size: 18),
+                  title: Text('Edit'))),
+        if (scope.canEdit && !cancelled && step > 2)
+          const PopupMenuItem(
+              value: 'undo',
+              child: ListTile(
+                  dense: true,
+                  leading: Icon(Icons.undo, size: 18),
+                  title: Text('Undo last step'))),
+        if (scope.canEdit && active)
+          const PopupMenuItem(
+              value: 'cancel',
+              child: ListTile(
+                  dense: true,
+                  leading: Icon(Icons.block, size: 18),
+                  title: Text('Cancel PO'))),
+        if (scope.isSectionAdmin && cancelled)
+          const PopupMenuItem(
+              value: 'reopen',
+              child: ListTile(
+                  dense: true,
+                  leading: Icon(Icons.restore, size: 18),
+                  title: Text('Reopen'))),
+        if (scope.isSectionAdmin)
+          const PopupMenuItem(
+              value: 'delete',
+              child: ListTile(
+                  dense: true,
+                  leading: Icon(Icons.delete_outline,
+                      size: 18, color: DsColors.redFg),
+                  title: Text('Delete permanently'))),
+      ],
+    );
+  }
+}
