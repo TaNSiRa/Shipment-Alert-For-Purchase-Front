@@ -22,5 +22,5 @@ class AppConfig {
   }
 
   /// Signed out after this long without a mouse move or key press.
-  static const idleTimeoutMinutes = 30;
+  static const idleTimeoutMinutes = 15;
 }

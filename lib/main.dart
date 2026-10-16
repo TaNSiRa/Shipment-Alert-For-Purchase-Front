@@ -40,6 +40,7 @@ part 'pages/masters_page.dart';
 part 'pages/users_page.dart';
 part 'pages/settings_page.dart';
 part 'pages/profile_page.dart';
+part 'pages/profile_id_badge.dart';
 part 'shared/design.dart';
 part 'shared/liquid_glass.dart';
 part 'shared/smooth_scroll.dart';
@@ -49,6 +50,7 @@ part 'shared/searchable_dropdown.dart';
 part 'shared/page_components.dart';
 part 'shared/helpers.dart';
 part 'shared/charts.dart';
+part 'shared/board3d.dart';
 
 void main() {
   // Each wheel notch becomes a short glide instead of a jump (RAP).

@@ -9,11 +9,18 @@ class CalendarPage extends StatefulWidget {
 class _CalendarPageState extends State<CalendarPage> {
   DateTime month = DateTime(DateTime.now().year, DateTime.now().month);
   List<Map<String, dynamic>> events = [];
+  /// Company holidays in the month: ISO date → name ('' when the holiday
+  /// database has the date only).
+  Map<String, String> holidays = {};
   bool loading = true;
   String? error;
   String? selectedDay;
   final Set<String> kinds = {'due', 'overdue', 'done', 'eta'};
   int _tick = -1;
+
+  /// Weekends and company holidays: the same grey as RAP's weekly plan and
+  /// personal calendar — opaque under liquid glass, a chip tint on the flat theme.
+  static Color get _offDayBg => Lg.on ? const Color(0xffc7cddf) : DsColors.chip;
 
   static const _kindStyle = {
     'overdue': (
@@ -60,6 +67,10 @@ class _CalendarPageState extends State<CalendarPage> {
         events = (r['events'] as List)
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList();
+        holidays = {
+          for (final h in (r['holidays'] as List? ?? const []))
+            '${h['date']}': '${h['name'] ?? ''}'
+        };
         loading = false;
         error = null;
       });
@@ -138,13 +149,13 @@ class _CalendarPageState extends State<CalendarPage> {
         const SizedBox(height: 12),
         Row(children: [
           for (final d in const [
+            'Sun',
             'Mon',
             'Tue',
             'Wed',
             'Thu',
             'Fri',
-            'Sat',
-            'Sun'
+            'Sat'
           ])
             Expanded(
                 child: Center(
@@ -177,7 +188,7 @@ class _CalendarPageState extends State<CalendarPage> {
 
   Widget _grid(Map<String, List<Map<String, dynamic>>> byDay) {
     final first = DateTime(month.year, month.month, 1);
-    final leading = first.weekday - 1; // Monday first
+    final leading = first.weekday % 7; // Sunday first
     final days = DateTime(month.year, month.month + 1, 0).day;
     final cells = ((leading + days) / 7).ceil() * 7;
     final today = todayIso();
@@ -186,8 +197,8 @@ class _CalendarPageState extends State<CalendarPage> {
         Row(children: [
           for (var c = 0; c < 7; c++)
             Expanded(
-                child: _dayCell(
-                    r * 7 + c - leading + 1, days, byDay, today, c >= 5)),
+                child: _dayCell(r * 7 + c - leading + 1, days, byDay, today,
+                    c == 0 || c == 6)),
         ]),
     ]);
   }
@@ -200,6 +211,8 @@ class _CalendarPageState extends State<CalendarPage> {
       bool weekend) {
     if (day < 1 || day > days) return const SizedBox(height: 104);
     final iso = isoDate(DateTime(month.year, month.month, day));
+    final holiday = holidays[iso];
+    final offDay = weekend || holiday != null;
     final list = byDay[iso] ?? const [];
     final isToday = iso == today;
     final isSelected = iso == selectedDay;
@@ -218,8 +231,8 @@ class _CalendarPageState extends State<CalendarPage> {
           decoration: BoxDecoration(
             color: isSelected
                 ? DsColors.navySoft.withValues(alpha: .4)
-                : weekend
-                    ? DsColors.subtleAlt
+                : offDay
+                    ? _offDayBg
                     : DsColors.subtle,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
@@ -246,11 +259,27 @@ class _CalendarPageState extends State<CalendarPage> {
                         fontWeight: FontWeight.w700,
                         color: isToday
                             ? Colors.white
-                            : weekend
+                            : offDay
                                 ? DsColors.faint2
                                 : DsColors.heading)),
               ),
-              const Spacer(),
+              // As in RAP: a weekday holiday says so beside the number.
+              if (holiday != null && !weekend) ...[
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Tooltip(
+                    message: holiday.isEmpty ? 'Holiday' : holiday,
+                    child: Text(holiday.isEmpty ? 'Holiday' : holiday,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                            color: DsColors.faint)),
+                  ),
+                ),
+              ] else
+                const Spacer(),
               if (list.length > 3)
                 Text('+${list.length - 3}', style: DsType.metaSm),
             ]),
@@ -285,6 +314,12 @@ class _CalendarPageState extends State<CalendarPage> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         DsCardTitle(day == null ? 'Pick a day' : fmtDate(day),
             icon: Icons.event_note_outlined),
+        if (day != null && holidays[day] != null) ...[
+          const SizedBox(height: 6),
+          DsTag(holidays[day]!.isEmpty
+              ? 'Company holiday'
+              : 'Holiday · ${holidays[day]}'),
+        ],
         const SizedBox(height: 10),
         if (day == null)
           const Text(
@@ -337,6 +372,29 @@ class _CalendarPageState extends State<CalendarPage> {
                   style: mono(size: 12, weight: FontWeight.w700)),
             ]),
           ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Row(children: [
+            Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: _offDayBg,
+                borderRadius: BorderRadius.circular(3),
+                border: Border.all(color: DsColors.cardBorder),
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Expanded(
+                child: Text('Weekend / holiday', style: DsType.meta)),
+            Tooltip(
+              message: 'Company holidays this month',
+              child: Text(
+                  '${holidays.keys.where((d) => DateTime.parse(d).weekday < 6).length}',
+                  style: mono(size: 12, weight: FontWeight.w700)),
+            ),
+          ]),
+        ),
       ]),
     );
   }

@@ -2598,7 +2598,7 @@ class _DsShimmerClock {
 /// of flat grey blocks is indistinguishable from a page that rendered empty,
 /// and users wait a lot longer for something that is visibly alive.
 class DsSkeletonBar extends StatefulWidget {
-  const DsSkeletonBar({super.key, this.width = 60, this.height = 10, this.radius = 6});
+  const DsSkeletonBar({super.key, this.width = 60, this.height = 10, this.radius = 6, this.color});
   final double width;
   final double height;
 
@@ -2606,6 +2606,11 @@ class DsSkeletonBar extends StatefulWidget {
   /// tile-shaped block wants its own radius so the ghost matches the shape it
   /// is standing in for.
   final double radius;
+
+  /// The bar's tint. [DsColors.line] by default; a ghost sitting on a coloured
+  /// surface (the dashboard's purple hero) wants a tint of that surface's own
+  /// ink instead, or it reads as a grey hole punched through it.
+  final Color? color;
 
   @override
   State<DsSkeletonBar> createState() => _DsSkeletonBarState();
@@ -2637,7 +2642,7 @@ class _DsSkeletonBarState extends State<DsSkeletonBar> {
     final Widget base = Container(
       width: widget.width,
       height: widget.height,
-      decoration: BoxDecoration(color: DsColors.line, borderRadius: radius),
+      decoration: BoxDecoration(color: widget.color ?? DsColors.line, borderRadius: radius),
     );
     if (!_attached) return base;
     return ClipRRect(
@@ -2826,6 +2831,131 @@ class DsSkeletonBoard extends StatelessWidget {
           ],
         ),
       );
+    });
+  }
+}
+
+/// Ghosts of the app's small widgets, for page skeletons that are built in the
+/// shape of the page they stand in for rather than as a generic list.
+///
+/// Each helper is the size of the real thing: [tag] is a [DsTag], [chip] a
+/// [DueChip], [lines] a row title over its meta line. A skeleton assembled from
+/// these lines up with the content to the pixel, so the cross-fade into data
+/// reads as the page filling in, not as one layout being swapped for another.
+abstract final class DsSkel {
+  /// A line of text. Wider than its box is fine: the bar is clamped to it.
+  static Widget line(double width, {double height = 10, Color? color}) =>
+      DsSkeletonBar(width: width, height: height, color: color);
+
+  /// A row title over its meta line — the most common cell in the app.
+  static Widget lines(double title, double sub,
+          {CrossAxisAlignment align = CrossAxisAlignment.start, double titleH = 11}) =>
+      Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: align, children: [
+        DsSkeletonBar(width: title, height: titleH),
+        const SizedBox(height: 7),
+        DsSkeletonBar(width: sub, height: 8),
+      ]);
+
+  static Widget circle(double size, {Color? color}) =>
+      DsSkeletonBar(width: size, height: size, radius: size / 2, color: color);
+
+  static Widget box(double width, double height, {double radius = 8, Color? color}) =>
+      DsSkeletonBar(width: width, height: height, radius: radius, color: color);
+
+  /// A [DsTag]: 20 high, corner 6.
+  static Widget tag(double width) => DsSkeletonBar(width: width, height: 20, radius: 6);
+
+  /// A fully rounded chip ([DueChip], a status pill).
+  static Widget chip(double width, {double height = 18}) =>
+      DsSkeletonBar(width: width, height: height, radius: height / 2);
+
+  /// A square icon or icon button.
+  static Widget icon([double size = 18]) => DsSkeletonBar(width: size, height: size, radius: size * .3);
+
+  /// A block as wide as its box.
+  static Widget fill(double height, {double radius = 8}) => SizedBox(
+      width: double.infinity, child: DsSkeletonBar(width: double.infinity, height: height, radius: radius));
+
+  /// A [DsCardTitle]: navy icon, then the title.
+  static Widget cardTitle(double width, {Widget? trailing}) => Row(children: [
+        icon(18),
+        const SizedBox(width: 8),
+        DsSkeletonBar(width: width, height: 13),
+        const Spacer(),
+        if (trailing != null) trailing,
+      ]);
+
+  /// A width that changes from row to row but never between rebuilds. A
+  /// column of identical bars reads as a pattern; real data is ragged.
+  static double vary(int i, double base, [double spread = .4]) =>
+      base * (1 - spread / 2 + spread * _jitter[i % _jitter.length]);
+  static const List<double> _jitter = [.62, .18, .9, .4, .75, .05, .55, .3, .98, .22, .68, .45];
+}
+
+/// One column of a [DsSkeletonRows] table: a fixed [width] or a [flex] share,
+/// and the ghost to draw in it for row `i`.
+class DsSkelCol {
+  const DsSkelCol(this.cell, {this.width, this.flex = 1, this.align = Alignment.centerLeft});
+  final Widget Function(int i) cell;
+  final double? width;
+  final int flex;
+  final Alignment align;
+}
+
+/// The body of a table while it loads — the same columns, the same row height
+/// and the same hairline between rows as the real thing, under the real header.
+///
+/// Rows fill the box they are given (an Expanded table body, a DsFitRows
+/// builder) and no more, so a page never scrolls or overflows while it waits.
+/// The lower rows fade out: a full page of solid ghosts is heavy, and a fade
+/// says "more below" without promising a count.
+class DsSkeletonRows extends StatelessWidget {
+  const DsSkeletonRows({
+    super.key,
+    required this.columns,
+    this.rowHeight = 50,
+    this.rows = 14,
+    this.padding = const EdgeInsets.symmetric(horizontal: 16),
+    this.divider = true,
+    this.fade = true,
+  });
+
+  final List<DsSkelCol> columns;
+  final double rowHeight;
+
+  /// At most this many; fewer when the box is shorter.
+  final int rows;
+  final EdgeInsetsGeometry padding;
+  final bool divider;
+  final bool fade;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, box) {
+      var count = rows;
+      if (box.maxHeight.isFinite) {
+        count = (box.maxHeight / rowHeight + 0.001).floor().clamp(1, rows);
+      }
+      return Column(mainAxisSize: MainAxisSize.min, children: [
+        for (var i = 0; i < count; i++)
+          Opacity(
+            opacity: fade && count > 3 ? 1 - .6 * (i / (count - 1)) : 1,
+            child: Container(
+              height: rowHeight,
+              padding: padding,
+              decoration: divider
+                  ? const BoxDecoration(border: Border(bottom: BorderSide(color: DsColors.lineSoft)))
+                  : null,
+              child: Row(children: [
+                for (final c in columns)
+                  if (c.width != null)
+                    SizedBox(width: c.width, child: Align(alignment: c.align, child: c.cell(i)))
+                  else
+                    Expanded(flex: c.flex, child: Align(alignment: c.align, child: c.cell(i))),
+              ]),
+            ),
+          ),
+      ]);
     });
   }
 }

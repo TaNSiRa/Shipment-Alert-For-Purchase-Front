@@ -223,7 +223,8 @@ const shipModeItems = [
 /// report is an email, not a step, so a PO is done once its goods arrive.
 const kStepCount = 9;
 
-/// "3/9 next: S/I" (steps done, next step) with a tiny progress bar.
+/// The step the PO is waiting at, in large type, over a progress bar with
+/// the count of steps done.
 class StepProgress extends StatelessWidget {
   const StepProgress({super.key, required this.po, this.width = 150});
   final Map<String, dynamic> po;
@@ -240,23 +241,31 @@ class StepProgress extends StatelessWidget {
             : dueColors('${po['dueState']}').$1 == DsColors.redFg
                 ? DsColors.redFg
                 : DsColors.navy;
+    final name = done ? 'Done' : '${po['currentStepShort'] ?? '-'}';
+    final fullName = '${po['currentStepName'] ?? ''}';
+    final nameText = Text(name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: DsType.rowTitle.copyWith(
+            fontSize: 13.5,
+            fontWeight: FontWeight.w800,
+            color: status == 'CANCELLED' ? DsColors.faint2 : color == DsColors.navy ? DsColors.navyDeep : color));
     return SizedBox(
       width: width,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-        // The count is steps DONE, the same thing the bar fills to; the name
-        // after it is the step the PO is waiting at.
+        // The name is the step the PO is waiting at; the count is steps DONE,
+        // the same thing the bar fills to.
+        fullName.isEmpty || fullName == name ? nameText : Tooltip(message: fullName, child: nameText),
+        const SizedBox(height: 5),
         Row(children: [
-          Text(done ? 'Done $kStepCount/$kStepCount' : '${step - 1}/$kStepCount',
-              style: mono(size: 10.5, weight: FontWeight.w700, color: color)),
+          Expanded(
+            child: DsProgressBar(
+                value: done ? 1 : ((step - 1) / kStepCount).clamp(0, 1).toDouble(), color: color, height: 5),
+          ),
           const SizedBox(width: 6),
-          if (!done)
-            Expanded(
-              child: Text('next: ${po['currentStepShort'] ?? ''}',
-                  maxLines: 1, overflow: TextOverflow.ellipsis, style: DsType.metaSm),
-            ),
+          Text(done ? '$kStepCount/$kStepCount' : '${step - 1}/$kStepCount',
+              style: mono(size: 10, weight: FontWeight.w700, color: color)),
         ]),
-        const SizedBox(height: 4),
-        DsProgressBar(value: done ? 1 : ((step - 1) / kStepCount).clamp(0, 1).toDouble(), color: color, height: 5),
       ]),
     );
   }

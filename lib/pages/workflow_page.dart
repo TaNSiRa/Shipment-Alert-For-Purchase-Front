@@ -138,7 +138,7 @@ class _WorkflowPageState extends State<WorkflowPage> {
   @override
   Widget build(BuildContext context) {
     final scope = AppScope.of(context);
-    if (loading) return const PageBody(children: [DsSkeletonList(rows: 8)]);
+    if (loading) return _skeleton();
     if (error != null) {
       return PageBody(children: [ErrorPanel(message: error!, onRetry: load)]);
     }
@@ -146,22 +146,7 @@ class _WorkflowPageState extends State<WorkflowPage> {
       DsCard(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            const Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('How a purchase shipment flows',
-                        style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: DsColors.heading)),
-                    SizedBox(height: 4),
-                    Text(
-                        'Nine steps from issuing the PO to the goods arriving at the factory. People enter only the PO date (N1) — '
-                        'every later step is just ticked when it happens, and the next due date is worked out from that real date.',
-                        style: DsType.meta),
-                  ]),
-            ),
+            const Expanded(child: _intro),
             if (scope.isSectionAdmin && !editing)
               DsPrimaryButton(
                 label: 'Edit steps',
@@ -183,7 +168,148 @@ class _WorkflowPageState extends State<WorkflowPage> {
     ]);
   }
 
+  static const _intro =
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Text('How a purchase shipment flows',
+        style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: DsColors.heading)),
+    SizedBox(height: 4),
+    Text(
+        'Nine steps from issuing the PO to the goods arriving at the factory. People enter only the PO date (N1) — '
+        'every later step is just ticked when it happens, and the next due date is worked out from that real date.',
+        style: DsType.meta),
+  ]);
+
+  /// Both cards in place while the steps load: the flow's step tiles and the
+  /// worked example's rows, ghosted, under their real titles.
+  Widget _skeleton() {
+    return PageBody(children: [
+      DsCard(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _intro,
+          const SizedBox(height: 18),
+          Wrap(runSpacing: 14, children: [
+            for (var i = 0; i < kStepCount; i++)
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                _stepGhost(i),
+                if (i < kStepCount - 1)
+                  const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 4),
+                      child: Icon(Icons.arrow_forward,
+                          size: 16, color: DsColors.iconSoft)),
+              ]),
+          ]),
+        ]),
+      ),
+      const SizedBox(height: 16),
+      DsCard(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Expanded(
+                child: DsCardTitle('Worked example — a PO issued today',
+                    icon: Icons.calculate_outlined)),
+            DsSkel.box(300, 30, radius: 10),
+          ]),
+          const SizedBox(height: 10),
+          DsSkel.line(520, height: 10),
+          const SizedBox(height: 18),
+          for (var i = 0; i < kStepCount; i++)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(children: [
+                SizedBox(
+                    width: 36,
+                    child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: DsSkel.circle(24))),
+                Expanded(
+                    child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: DsSkel.line(DsSkel.vary(i, 170), height: 11))),
+                SizedBox(
+                    width: 260,
+                    child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: DsSkel.line(DsSkel.vary(i + 3, 180)))),
+                SizedBox(
+                    width: 130,
+                    child: Align(
+                        alignment: Alignment.centerRight,
+                        child: DsSkel.line(84, height: 11))),
+              ]),
+            ),
+        ]),
+      ),
+    ]);
+  }
+
+  /// One tile of [_flow], ghosted.
+  Widget _stepGhost(int i) {
+    return Container(
+      width: 196,
+      height: 150,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: DsColors.subtle,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: DsColors.cardBorder),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          DsSkel.circle(26),
+          const SizedBox(width: 8),
+          DsSkel.icon(17),
+          const Spacer(),
+          DsSkel.tag(28),
+        ]),
+        const SizedBox(height: 12),
+        DsSkel.line(DsSkel.vary(i, 150), height: 12),
+        const SizedBox(height: 7),
+        if (i.isOdd) DsSkel.line(DsSkel.vary(i + 4, 86), height: 12),
+        const Spacer(),
+        DsSkel.line(DsSkel.vary(i + 2, 140), height: 10),
+        const SizedBox(height: 6),
+        DsSkel.line(DsSkel.vary(i + 7, 90), height: 8),
+      ]),
+    );
+  }
+
+  /// The nine steps on the RAP request-timeline board: a disc per step over a
+  /// raised rail, its milestone floating above and its due-date rule below.
+  /// Too narrow for the board → the flat tiles of [_flowTiles].
   Widget _flow(List<Map<String, dynamic>> s) {
+    return Board3dRail(
+      minCellPx: 140,
+      maxPerRow: 5,
+      minWidth: 520,
+      stages: [
+        for (var i = 0; i < s.length; i++)
+          Board3dStage(
+            title: '${s[i]['name']}',
+            icon: stepIcon(s[i]['icon']),
+            accent: s[i]['isArrival'] == true
+                ? DsColors.tealFg
+                : board3dPalette[i % board3dPalette.length],
+            number: '${s[i]['stepNo']}',
+            top: '${s[i]['milestone'] ?? ''}'.isEmpty
+                ? null
+                : '${s[i]['milestone']}',
+            pills: [
+              if (s[i]['isArrival'] == true) ('ARRIVAL = ETA', DsColors.tealFg),
+              if (s[i]['isFlex'] == true)
+                ('ABSORBS LEAD TIME', DsColors.navy),
+            ],
+            lines: [_rule(s[i], s)],
+            glow: s[i]['isArrival'] == true,
+          ),
+      ],
+      fallback: (_) => _flowTiles(s),
+    );
+  }
+
+  Widget _flowTiles(List<Map<String, dynamic>> s) {
     return Wrap(spacing: 0, runSpacing: 14, children: [
       for (var i = 0; i < s.length; i++)
         Row(mainAxisSize: MainAxisSize.min, children: [

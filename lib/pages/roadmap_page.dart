@@ -126,7 +126,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
             clip: true,
             color: DsColors.sheet,
             child: loading
-                ? const DsSkeletonList(rows: 8)
+                ? _skeleton()
                 : error != null
                     ? Center(child: ErrorPanel(message: error!, onRetry: load))
                     : rows.isEmpty
@@ -164,10 +164,10 @@ class _RoadmapPageState extends State<RoadmapPage> {
                                                 page = first ~/ fit;
                                               });
                                             },
-                                            child: Column(children: [
+                                            builder: (_, rowH) => Column(children: [
                                               for (final r in visible)
                                                 Container(
-                                                  height: _rowH,
+                                                  height: rowH,
                                                   decoration: const BoxDecoration(
                                                       border: Border(
                                                           bottom: BorderSide(
@@ -202,6 +202,97 @@ class _RoadmapPageState extends State<RoadmapPage> {
           ),
         ),
       ),
+    ]);
+  }
+
+  /// The map itself, ghosted: the same step columns and the same row height,
+  /// each row a line of step circles — reached ones solid, the rest hollow —
+  /// so the grid is already in place when the dates land in it.
+  Widget _skeleton() {
+    final n = steps.isEmpty ? kStepCount : steps.length;
+    return LayoutBuilder(builder: (context, box) {
+      final w = max(box.maxWidth, _wPo + _wCellMin * n + _wEta + 24);
+      final cell = (w - _wPo - _wEta - 24) / n;
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: w,
+          height: box.maxHeight,
+          child: Column(children: [
+            // A status switch reloads with the steps already known: keep
+            // the real header then, and ghost only the first load's.
+            steps.isEmpty ? _ghostHeader(n, cell) : _header(cell),
+            const Divider(height: 1),
+            Expanded(
+              child: DsSkeletonRows(
+                rowHeight: _rowH,
+                padding: const EdgeInsets.fromLTRB(14, 0, 10, 0),
+                columns: [
+                  DsSkelCol(
+                      (i) => Row(children: [
+                            DsSkel.circle(9),
+                            const SizedBox(width: 9),
+                            DsSkel.lines(DsSkel.vary(i, 76, .2), DsSkel.vary(i + 3, 64)),
+                          ]),
+                      width: _wPo),
+                  for (var k = 1; k <= n; k++)
+                    DsSkelCol((i) => _ghostCell(k, n, 2 + (i * 3 + 1) % max(1, n - 2)),
+                        width: cell, align: Alignment.center),
+                  DsSkelCol((_) => DsSkel.lines(70, 44, align: CrossAxisAlignment.end),
+                      align: Alignment.centerRight),
+                ],
+              ),
+            ),
+          ]),
+        ),
+      );
+    });
+  }
+
+  Widget _ghostHeader(int n, double cell) {
+    return Container(
+      color: DsColors.subtle,
+      padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+      child: Row(children: [
+        const SizedBox(
+            width: _wPo, child: Text('PURCHASE ORDER', style: DsType.eyebrow)),
+        for (var k = 0; k < n; k++)
+          SizedBox(
+            width: cell,
+            child: Column(children: [
+              DsSkel.icon(16),
+              const SizedBox(height: 5),
+              DsSkel.line(DsSkel.vary(k, 50, .3), height: 9),
+            ]),
+          ),
+        const Expanded(
+            child: Text('ETA FACTORY',
+                textAlign: TextAlign.right, style: DsType.eyebrow)),
+      ]),
+    );
+  }
+
+  /// One step of a ghost row: [_cell]'s circle on its connecting line.
+  Widget _ghostCell(int n, int count, int reached) {
+    Widget link(bool show) => Expanded(
+        child: Container(
+            height: 2, color: show ? DsColors.line : Colors.transparent));
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      Row(children: [
+        link(n > 1),
+        n <= reached
+            ? DsSkel.circle(22)
+            : Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: DsColors.line, width: 1.6)),
+              ),
+        link(n < count),
+      ]),
+      const SizedBox(height: 5),
+      DsSkel.line(30, height: 8),
     ]);
   }
 

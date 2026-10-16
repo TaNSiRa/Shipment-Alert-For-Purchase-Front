@@ -26,6 +26,7 @@ class _AppShellState extends State<AppShell> {
   bool navCollapsed = _readPref('psa.navCollapsed') == '1';
   Map<String, dynamic> health = const {'api': 'checking', 'database': 'checking'};
   List<dynamic> alerts = const [];
+
   /// Shown once on the login page (a failed Microsoft sign-in).
   String? loginNotice;
 
@@ -43,6 +44,10 @@ class _AppShellState extends State<AppShell> {
   Timer? _refreshDebounce;
   DateTime _lastKeepAlive = DateTime.fromMillisecondsSinceEpoch(0);
   bool _warningOpen = false;
+
+  /// The "Still there?" dialog's context while it is open, so signing out
+  /// (idle timeout or any other way) can close it.
+  BuildContext? _warningContext;
 
   static String? _readPref(String key) {
     try {
@@ -290,6 +295,7 @@ class _AppShellState extends State<AppShell> {
     _idleTimer?.cancel();
     _warnTimer?.cancel();
     IdleClock.deadline = null;
+    _closeIdleWarning();
     api.token = null;
     api.csrfToken = null;
     api.sectionCode = null;
@@ -333,25 +339,37 @@ class _AppShellState extends State<AppShell> {
     final stay = await showGlassDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AppDialog(
-        title: 'Still there?',
-        icon: Icons.timer_outlined,
-        width: 420,
-        body: const Text('You will be signed out in 2 minutes because there has been no activity.',
-            style: TextStyle(fontSize: 13.5, color: DsColors.text)),
-        actions: [
-          DsOutlineButton(label: 'Sign out', height: 40, onPressed: () => Navigator.pop(ctx, false)),
-          DsPrimaryButton(label: 'Stay signed in', height: 40, onPressed: () => Navigator.pop(ctx, true)),
-        ],
-      ),
+      builder: (ctx) {
+        _warningContext = ctx;
+        return AppDialog(
+          title: 'Still there?',
+          icon: Icons.timer_outlined,
+          width: 420,
+          body: const Text('You will be signed out in 2 minutes because there has been no activity.',
+              style: TextStyle(fontSize: 13.5, color: DsColors.text)),
+          actions: [
+            DsOutlineButton(label: 'Sign out', height: 40, onPressed: () => Navigator.pop(ctx, false)),
+            DsPrimaryButton(label: 'Stay signed in', height: 40, onPressed: () => Navigator.pop(ctx, true)),
+          ],
+        );
+      },
     );
     _warningOpen = false;
+    _warningContext = null;
     if (stay == true) {
       _lastKeepAlive = DateTime.fromMillisecondsSinceEpoch(0);
       _onActivity();
     } else if (stay == false) {
       await logout();
     }
+  }
+
+  /// Takes the "Still there?" dialog down if it is showing. It then returns
+  /// null, which [_showIdleWarning] treats as neither stay nor sign out.
+  void _closeIdleWarning() {
+    final ctx = _warningContext;
+    _warningContext = null;
+    if (ctx != null && ctx.mounted) Navigator.of(ctx).pop();
   }
 
   void _onRealtime(String event, dynamic data) {
@@ -486,8 +504,10 @@ class _AppShellState extends State<AppShell> {
                 onSelect: (p) => navigate(p),
                 onLogout: () async {
                   final ok = await confirmAction(context,
-                      title: 'Sign out?', message: 'You will need to sign in again to use the system.',
-                      confirmLabel: 'Sign out', icon: Icons.logout);
+                      title: 'Sign out?',
+                      message: 'You will need to sign in again to use the system.',
+                      confirmLabel: 'Sign out',
+                      icon: Icons.logout);
                   if (ok) await logout();
                 },
               ),

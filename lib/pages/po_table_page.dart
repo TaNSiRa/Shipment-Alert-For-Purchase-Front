@@ -177,7 +177,7 @@ class _PoTablePageState extends State<PoTablePage> {
     final width = MediaQuery.of(context).size.width;
     return Column(children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(22, 16, 22, 10),
+        padding: const EdgeInsets.fromLTRB(22, 12, 22, 8),
         child: Column(children: [
           Row(children: [
             Expanded(
@@ -223,7 +223,7 @@ class _PoTablePageState extends State<PoTablePage> {
                   onPressed: _import),
             ],
           ]),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Row(children: [
             Expanded(
               child: Wrap(
@@ -322,7 +322,7 @@ class _PoTablePageState extends State<PoTablePage> {
       ),
       Expanded(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(22, 0, 22, 16),
+          padding: const EdgeInsets.fromLTRB(22, 0, 22, 12),
           child: DsCard(
             padding: EdgeInsets.zero,
             clip: true,
@@ -340,12 +340,16 @@ class _PoTablePageState extends State<PoTablePage> {
                           child: DsFitRows(
                               rowHeight: _rowH,
                               onFit: _onFit,
-                              child: _body(scope))),
+                              builder: (_, rowH) => _body(scope, rowH))),
                     ])),
               ),
               const Divider(height: 1),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              // The pager brings its own vertical padding; the floor is the
+              // pager's height, so the footer does not grow once the first
+              // page arrives (that would change the page size and refetch).
+              Container(
+                constraints: const BoxConstraints(minHeight: 56),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
                 child: Row(children: [
                   Text(loading ? 'Loading…' : plural(total, 'PO'),
                       style: DsType.meta),
@@ -469,7 +473,7 @@ class _PoTablePageState extends State<PoTablePage> {
 
     return Container(
       color: DsColors.subtle,
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
       child: Row(children: [
         const SizedBox(width: 8),
         h('PO No.', _wPo),
@@ -486,8 +490,8 @@ class _PoTablePageState extends State<PoTablePage> {
     );
   }
 
-  Widget _body(AppScope scope) {
-    if (loading && rows.isEmpty) return const DsSkeletonList(rows: 8);
+  Widget _body(AppScope scope, double rowH) {
+    if (loading && rows.isEmpty) return _skeleton(scope, rowH);
     if (error != null) {
       return Center(
           child: Padding(
@@ -525,12 +529,73 @@ class _PoTablePageState extends State<PoTablePage> {
     return Column(children: [
       for (final r in rows)
         Container(
-          height: _rowH,
+          height: rowH,
           decoration: const BoxDecoration(
               border: Border(bottom: BorderSide(color: DsColors.lineSoft))),
           child: _row(scope, r),
         ),
     ]);
+  }
+
+  /// The rows of [_row], column for column, while the first page loads.
+  Widget _skeleton(AppScope scope, double rowH) {
+    return DsSkeletonRows(
+      rowHeight: rowH,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      columns: [
+        DsSkelCol((_) => const SizedBox(), width: 8),
+        DsSkelCol((i) => DsSkel.lines(DsSkel.vary(i, 78, .2), DsSkel.vary(i + 3, 56)),
+            width: _wPo),
+        DsSkelCol((i) => DsSkel.lines(DsSkel.vary(i + 1, 150), DsSkel.vary(i + 5, 100))),
+        DsSkelCol((_) => DsSkel.line(72), width: _wDate),
+        DsSkelCol((_) => DsSkel.line(16), width: _wLines),
+        DsSkelCol(
+            (_) => Row(mainAxisSize: MainAxisSize.min, children: [
+                  DsSkel.circle(14),
+                  const SizedBox(width: 5),
+                  DsSkel.line(30),
+                ]),
+            width: _wMode),
+        DsSkelCol((_) => const SizedBox(), width: 12),
+        DsSkelCol(
+            (i) => Padding(
+                  padding: const EdgeInsets.only(right: 14),
+                  child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        DsSkel.line(DsSkel.vary(i, 92), height: 13),
+                        const SizedBox(height: 6),
+                        Row(children: [
+                          Expanded(child: DsSkel.fill(5, radius: 3)),
+                          const SizedBox(width: 6),
+                          DsSkel.line(22, height: 9),
+                        ]),
+                      ]),
+                ),
+            width: 190),
+        DsSkelCol(
+            (i) => Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      DsSkel.line(76, height: 11),
+                      const SizedBox(height: 5),
+                      DsSkel.chip(DsSkel.vary(i + 2, 70), height: 16),
+                    ]),
+            width: _wDue),
+        DsSkelCol((_) => DsSkel.line(74, height: 11), width: _wEta),
+        DsSkelCol(
+            (_) => Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                  if (scope.canEdit) DsSkel.circle(34),
+                  const SizedBox(width: 14),
+                  DsSkel.box(4, 16, radius: 2), // the ⋮ menu
+                  const SizedBox(width: 14),
+                ]),
+            width: _wAct,
+            align: Alignment.centerRight),
+      ],
+    );
   }
 
   Widget _row(AppScope scope, Map<String, dynamic> po) {
@@ -595,7 +660,7 @@ class _PoTablePageState extends State<PoTablePage> {
                 width: 190,
                 child: Padding(
                     padding: const EdgeInsets.only(right: 14),
-                    child: StepProgress(po: po))),
+                    child: StepProgress(po: po, width: 176))),
             SizedBox(
               width: _wDue,
               child: active

@@ -631,14 +631,13 @@ class _TimelineRow extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.fromLTRB(14, 10, 12, 10),
               decoration: BoxDecoration(
-                color: current
-                    ? DsColors.navySoft.withValues(alpha: .45)
-                    : done
-                        ? DsColors.subtleAlt
-                        : Colors.transparent,
+                color: done || current
+                    ? DsColors.subtleAlt
+                    : Colors.transparent,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                    color: current ? DsColors.navyBorder : DsColors.lineSoft),
+                border: current
+                    ? Border.all(color: color, width: 1.5)
+                    : Border.all(color: DsColors.lineSoft),
               ),
               child:
                   Row(crossAxisAlignment: CrossAxisAlignment.start, children: [

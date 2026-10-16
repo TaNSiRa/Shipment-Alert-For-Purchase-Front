@@ -87,8 +87,8 @@ Future<bool> showMasterImportDialog(BuildContext context) async {
 /// page holds as many as fit (RAP).
 const _masterRowH = 50.0;
 
-Widget _masterRow(Widget child) => Container(
-      height: _masterRowH,
+Widget _masterRow(Widget child, double height) => Container(
+      height: height,
       decoration: const BoxDecoration(
           border: Border(bottom: BorderSide(color: DsColors.lineSoft))),
       child: child,
@@ -406,7 +406,13 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
             clip: true,
             color: DsColors.sheet,
             child: loading
-                ? const DsSkeletonList(rows: 8)
+                ? MinWidthScroll(
+                    minWidth: 1100,
+                    child: Column(children: [
+                      _row(null, scope, header: true),
+                      const Divider(height: 1),
+                      Expanded(child: _skeleton(scope)),
+                    ]))
                 : error != null
                     ? Center(child: ErrorPanel(message: error!, onRetry: load))
                     : rows.isEmpty
@@ -434,9 +440,9 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
                                         page = first ~/ fit;
                                       });
                                     },
-                                    child: Column(children: [
+                                    builder: (_, rowH) => Column(children: [
                                       for (final r in rows.skip(p * size).take(size))
-                                        _row(r, scope),
+                                        _row(r, scope, height: rowH),
                                     ]),
                                   ),
                                 ),
@@ -454,7 +460,31 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
     ]);
   }
 
-  Widget _row(Map<String, dynamic>? s, AppScope scope, {bool header = false}) {
+  /// [_row]'s columns, ghosted, while the list loads.
+  Widget _skeleton(AppScope scope) => DsSkeletonRows(
+        rowHeight: _masterRowH,
+        columns: [
+          DsSkelCol((i) => DsSkel.line(DsSkel.vary(i, 58, .2), height: 11), width: 110),
+          DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 2, 210), height: 11)),
+          DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 4, 84)), width: 140),
+          DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 1, 54)), width: 100),
+          DsSkelCol((_) => DsSkel.line(34), width: 100),
+          DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 6, 22)), width: 90),
+          DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 3, 18)), width: 90),
+          DsSkelCol((_) => DsSkel.tag(50), width: 90),
+          DsSkelCol(
+              (_) => Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                    for (var k = 0; k < (scope.isSectionAdmin ? 3 : 1); k++) ...[
+                      const SizedBox(width: 14),
+                      DsSkel.icon(18),
+                    ],
+                    const SizedBox(width: 9),
+                  ]),
+              width: 120),
+        ],
+      );
+
+  Widget _row(Map<String, dynamic>? s, AppScope scope, {bool header = false, double height = _masterRowH}) {
     Widget c(String t, double? w, {TextStyle? style}) {
       final text = Text(header ? t.toUpperCase() : t,
           maxLines: 1,
@@ -528,7 +558,8 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
     );
     if (header) return Container(color: DsColors.subtle, child: content);
     return _masterRow(InkWell(
-        onTap: scope.isSectionAdmin ? () => edit(s) : null, child: content));
+        onTap: scope.isSectionAdmin ? () => edit(s) : null, child: content),
+        height);
   }
 }
 
@@ -827,6 +858,33 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
     }
   }
 
+  /// A searchable filter-bar picker, the same as the shipments filters.
+  Widget _filterDropdown<T>({
+    required double width,
+    required String hint,
+    required T? value,
+    required List<SearchableDropdownItem<T>> items,
+    required ValueChanged<T?> onChanged,
+  }) {
+    return SizedBox(
+      width: width,
+      height: 40,
+      child: SearchableDropdownField<T>(
+        value: items.any((i) => i.value == value) ? value : null,
+        dense: true,
+        dialogTitle: hint,
+        decoration: dsInput(hint: hint).copyWith(
+            isDense: true,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 10)),
+        items: [SearchableDropdownItem<T>(value: null, label: hint), ...items],
+        onChanged: (v) {
+          if (v != value) onChanged(v);
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scope = AppScope.of(context);
@@ -843,52 +901,33 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
           unawaited(load());
         },
         children: [
-          SizedBox(
+          _filterDropdown<int>(
             width: 230,
-            height: 40,
-            child: DropdownButtonFormField<int>(
-              key: ValueKey('sup-$supplierId-${suppliers.length}'),
-              initialValue: suppliers.any((s) => intFrom(s['id']) == supplierId)
-                  ? supplierId
-                  : null,
-              isExpanded: true,
-              decoration: dsInput(hint: 'All suppliers'),
-              style: const TextStyle(fontSize: 12.5, color: DsColors.heading),
-              items: [
-                const DropdownMenuItem<int>(
-                    value: null, child: Text('All suppliers')),
-                for (final s in suppliers)
-                  DropdownMenuItem(
-                      value: intFrom(s['id']),
-                      child: Text('${s['shortName'] ?? s['name']}',
-                          overflow: TextOverflow.ellipsis)),
-              ],
-              onChanged: (v) {
-                supplierId = v;
-                _changed();
-              },
-            ),
+            hint: 'All suppliers',
+            value: supplierId,
+            items: [
+              for (final s in suppliers)
+                SearchableDropdownItem(
+                    value: intFrom(s['id']),
+                    label: '${s['shortName'] ?? s['name']}',
+                    subtitle: '${s['supplierCode'] ?? ''} · ${s['name']}'),
+            ],
+            onChanged: (v) {
+              supplierId = v;
+              _changed();
+            },
           ),
-          SizedBox(
+          _filterDropdown<String>(
             width: 160,
-            height: 40,
-            child: DropdownButtonFormField<String>(
-              key: ValueKey('type-$type-${types.length}'),
-              initialValue: type,
-              isExpanded: true,
-              decoration: dsInput(hint: 'All types'),
-              style: const TextStyle(fontSize: 12.5, color: DsColors.heading),
-              items: [
-                const DropdownMenuItem<String>(
-                    value: null, child: Text('All types')),
-                for (final t in types)
-                  DropdownMenuItem(value: t, child: Text(t)),
-              ],
-              onChanged: (v) {
-                type = v;
-                _changed();
-              },
-            ),
+            hint: 'All types',
+            value: type,
+            items: [
+              for (final t in types) SearchableDropdownItem(value: t, label: t),
+            ],
+            onChanged: (v) {
+              type = v;
+              _changed();
+            },
           ),
           FilterChip(
             label: const Text('No material code'),
@@ -920,21 +959,23 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
                             child: DsFitRows(
                               rowHeight: _masterRowH,
                               onFit: _onFit,
-                              child: loading
-                                  ? const DsSkeletonList(rows: 8)
+                              builder: (_, rowH) => loading
+                                  ? _skeleton(scope, rowH)
                                   : rows.isEmpty
                                       ? const DsEmptyState(
                                           icon: Icons.science_outlined,
                                           message: 'No material matches')
                                       : Column(children: [
-                                          for (final r in rows) _row(r, scope),
+                                          for (final r in rows) _row(r, scope, height: rowH),
                                         ]),
                             ),
                           ),
                           const Divider(height: 1),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 14, vertical: 8),
+                          // Floor = the pager's height, so the footer does not
+                          // grow once the first page arrives.
+                          Container(
+                            constraints: const BoxConstraints(minHeight: 56),
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
                             child: Row(children: [
                               Text(plural(total, 'material'),
                                   style: DsType.meta),
@@ -958,7 +999,31 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
     ]);
   }
 
-  Widget _row(Map<String, dynamic>? m, AppScope scope, {bool header = false}) {
+  /// [_row]'s columns, ghosted, while a page loads.
+  Widget _skeleton(AppScope scope, double rowH) => DsSkeletonRows(
+        rowHeight: rowH,
+        columns: [
+          DsSkelCol((i) => DsSkel.line(DsSkel.vary(i, 96), height: 11), width: 150),
+          DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 3, 70, .2), height: 11), width: 110),
+          DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 1, 48)), width: 100),
+          DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 5, 230)), flex: 3),
+          DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 2, 110)), flex: 2),
+          DsSkelCol((_) => DsSkel.line(52), width: 90),
+          DsSkelCol((_) => DsSkel.tag(50), width: 80),
+          DsSkelCol(
+              (_) => scope.isSectionAdmin
+                  ? Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                      DsSkel.icon(18),
+                      const SizedBox(width: 14),
+                      DsSkel.icon(18),
+                      const SizedBox(width: 9),
+                    ])
+                  : const SizedBox(),
+              width: 80),
+        ],
+      );
+
+  Widget _row(Map<String, dynamic>? m, AppScope scope, {bool header = false, double height = _masterRowH}) {
     Widget c(String t, double? w, {TextStyle? style, int flex = 1}) {
       final text = Text(header ? t.toUpperCase() : t,
           maxLines: 1,
@@ -1036,6 +1101,7 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
     );
     if (header) return Container(color: DsColors.subtle, child: content);
     return _masterRow(InkWell(
-        onTap: scope.isSectionAdmin ? () => edit(m) : null, child: content));
+        onTap: scope.isSectionAdmin ? () => edit(m) : null, child: content),
+        height);
   }
 }

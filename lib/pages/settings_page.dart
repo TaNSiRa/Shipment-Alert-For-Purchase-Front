@@ -6,7 +6,6 @@ enum _SettingsTab {
   imports,
   outbox,
   activity,
-  sections,
   holidays,
   security,
   system
@@ -33,13 +32,12 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     final sectionItems = [
       (_SettingsTab.mail, Icons.mail_outline, 'Email alerts'),
-      (_SettingsTab.scheduling, Icons.timelapse, 'Due dates & alerts'),
+      (_SettingsTab.scheduling, Icons.timelapse, 'Due soon alert'),
+    ];
+    final systemItems = [
       (_SettingsTab.imports, Icons.upload_file, 'Import history'),
       (_SettingsTab.outbox, Icons.outbox_outlined, 'Mail log'),
       (_SettingsTab.activity, Icons.history, 'Activity log'),
-    ];
-    final systemItems = [
-      (_SettingsTab.sections, Icons.apartment, 'Sections'),
       (_SettingsTab.holidays, Icons.beach_access_outlined, 'Holidays'),
       (_SettingsTab.security, Icons.shield_outlined, 'Login security'),
       (_SettingsTab.system, Icons.dns_outlined, 'System status & log'),
@@ -87,7 +85,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   Padding(
                     padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-                    child: DsSectionLabel('Section · ${scope.section['name']}'),
+                    child: DsSectionLabel('Alerts'),
                   ),
                   for (final e in sectionItems) item(e),
                   if (scope.isAdmin) ...[
@@ -109,7 +107,6 @@ class _SettingsPageState extends State<SettingsPage> {
             _SettingsTab.imports => const _ImportHistory(),
             _SettingsTab.outbox => const _MailLog(),
             _SettingsTab.activity => const _ActivityLog(system: false),
-            _SettingsTab.sections => const _SectionsAdmin(),
             _SettingsTab.holidays => const _HolidaysAdmin(),
             _SettingsTab.security => const _LoginSecurity(),
             _SettingsTab.system => const _SystemStatus(),
@@ -166,6 +163,8 @@ class _MailSettings extends StatefulWidget {
 
 class _MailSettingsState extends State<_MailSettings> with _SettingsData {
   Map<String, dynamic>? status;
+  List<Map<String, dynamic>>? members;
+  final Set<int> _toggling = {};
   final extra = TextEditingController();
   TimeOfDay time = const TimeOfDay(hour: 8, minute: 30);
 
@@ -175,7 +174,43 @@ class _MailSettingsState extends State<_MailSettings> with _SettingsData {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(loadSettings());
       unawaited(_status());
+      unawaited(_members());
     });
+  }
+
+  Future<void> _members() async {
+    final r = await guard(context,
+        () => AppScope.read(context).api.getJson('/settings/mail/members'));
+    if (r != null && mounted) {
+      setState(() => members = (r['data'] as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList());
+    }
+  }
+
+  // The same switch as "Daily shipment email" in that person's Profile.
+  Future<void> _setReceives(Map<String, dynamic> m, bool on) async {
+    final scope = AppScope.read(context);
+    final id = intFrom(m['id'])!;
+    setState(() {
+      _toggling.add(id);
+      m['receiveDailyMail'] = on;
+    });
+    final r = await guard(
+        context,
+        () => scope.api
+            .patchJson('/settings/mail/members/$id', {'receiveDailyMail': on}));
+    if (!mounted) return;
+    setState(() {
+      _toggling.remove(id);
+      if (r == null) m['receiveDailyMail'] = !on;
+    });
+    if (r != null) {
+      if (id == intFrom(scope.me['id'])) {
+        scope.onMeChanged({'receiveDailyMail': on});
+      }
+      unawaited(_status());
+    }
   }
 
   @override
@@ -241,10 +276,27 @@ class _MailSettingsState extends State<_MailSettings> with _SettingsData {
 
   @override
   Widget build(BuildContext context) {
-    if (loading) return const PageBody(children: [DsSkeletonList(rows: 5)]);
+    if (loading) {
+      return const PageBody(children: [
+        _CardGhost('Daily shipment email', Icons.mail_outline,
+            lines: 2, switches: 2, fields: [170, null], save: true),
+        SizedBox(height: 16),
+        _CardGhost('Recipients', Icons.groups_outlined, lines: 1, tags: 4),
+        SizedBox(height: 16),
+        _CardGhost('Try it', Icons.science_outlined, buttons: 5),
+      ]);
+    }
     final configured = status?['configured'] == true;
     final recipients =
         (status?['recipients'] as List? ?? const []).cast<dynamic>();
+    final memberEmails = {
+      for (final m in members ?? const <Map<String, dynamic>>[])
+        '${m['email']}'.trim().toLowerCase()
+    };
+    final extraOnly = [
+      for (final r in recipients)
+        if (!memberEmails.contains('$r'.toLowerCase())) '$r'
+    ];
     final runs = (status?['lastRuns'] as List? ?? const []).cast<Map>();
     return PageBody(children: [
       DsCard(
@@ -340,13 +392,75 @@ class _MailSettingsState extends State<_MailSettings> with _SettingsData {
               icon: Icons.groups_outlined),
           const SizedBox(height: 6),
           const Text(
-              'Active members of this section who left "Receive the daily email" on in their profile, plus the extra recipients.',
+              'Switch the daily email on or off for anyone in the section — the same switch each person has in Profile › Email reminders.',
               style: DsType.meta),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
+          if (members == null)
+            DsSkeletonRows(
+              rows: 4,
+              rowHeight: 52,
+              padding: EdgeInsets.zero,
+              columns: [
+                DsSkelCol((i) => DsSkel.lines(
+                    DsSkel.vary(i, 160), DsSkel.vary(i + 3, 220))),
+                DsSkelCol((i) => DsSkel.tag(DsSkel.vary(i + 1, 70, .3)),
+                    width: 130),
+                DsSkelCol((_) => DsSkel.chip(40, height: 22),
+                    width: 60, align: Alignment.centerRight),
+              ],
+            )
+          else if (members!.isEmpty)
+            const Padding(
+                padding: EdgeInsets.symmetric(vertical: 10),
+                child: Text('Nobody in this section yet', style: DsType.meta))
+          else
+            for (final m in members!)
+              Container(
+                height: 52,
+                decoration: const BoxDecoration(
+                    border:
+                        Border(bottom: BorderSide(color: DsColors.lineSoft))),
+                child: Row(children: [
+                  Expanded(
+                    child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('${m['displayName'] ?? '-'}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: DsType.rowTitle),
+                          Text(
+                              m['hasEmail'] == true
+                                  ? '${m['email']}'
+                                  : 'No email address',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: DsType.metaSm),
+                        ]),
+                  ),
+                  SizedBox(
+                      width: 130,
+                      child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: DsTag('${m['roleName'] ?? m['roleCode']}'))),
+                  Switch(
+                    value: m['receiveDailyMail'] == true,
+                    onChanged: m['hasEmail'] != true ||
+                            _toggling.contains(intFrom(m['id']))
+                        ? null
+                        : (v) => unawaited(_setReceives(m, v)),
+                  ),
+                ]),
+              ),
+          const SizedBox(height: 12),
+          const DsSectionLabel('Extra recipients'),
+          const SizedBox(height: 6),
           Wrap(spacing: 6, runSpacing: 6, children: [
-            for (final r in recipients) DsTag('$r'),
-            if (recipients.isEmpty)
-              const Text('Nobody yet', style: DsType.meta),
+            for (final r in extraOnly) DsTag(r),
+            if (extraOnly.isEmpty)
+              const Text('None — add addresses in the card above',
+                  style: DsType.meta),
           ]),
         ]),
       ),
@@ -432,8 +546,6 @@ class _SchedulingSettings extends StatefulWidget {
 
 class _SchedulingSettingsState extends State<_SchedulingSettings>
     with _SettingsData {
-  final defaultLead = TextEditingController();
-  final minFlex = TextEditingController();
   final dueSoon = TextEditingController();
 
   @override
@@ -444,77 +556,53 @@ class _SchedulingSettingsState extends State<_SchedulingSettings>
   }
 
   @override
+  void dispose() {
+    dueSoon.dispose();
+    super.dispose();
+  }
+
+  @override
   void onLoaded() {
-    defaultLead.text = '${values['workflow.defaultLeadTimeDays']}';
-    minFlex.text = '${values['workflow.minFlexDays']}';
     dueSoon.text = '${values['alert.dueSoonDays']}';
   }
 
   @override
   Widget build(BuildContext context) {
-    if (loading) return const PageBody(children: [DsSkeletonList(rows: 5)]);
-    Widget numberField(String label, TextEditingController c, String hint) =>
-        SizedBox(
-          width: 220,
-          child: DsLabeledField(
-            label: label,
-            child: TextField(
-              controller: c,
-              keyboardType: TextInputType.number,
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-                LengthLimitingTextInputFormatter(3)
-              ],
-              decoration: dsInput(hint: hint),
-            ),
-          ),
-        );
+    if (loading) {
+      return const PageBody(children: [
+        _CardGhost('"Due soon" alert', Icons.timelapse,
+            lines: 1, fields: [220], save: true),
+      ]);
+    }
     return PageBody(children: [
       DsCard(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const DsCardTitle('How due dates are counted',
-              icon: Icons.calculate_outlined),
-          const SizedBox(height: 10),
-          DsSegmented(
-            selected: values['workflow.dayMode'] == 'WORKING' ? 1 : 0,
-            length: 2,
-            itemBuilder: (context, i, t) => Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              child: Text(
-                  [
-                    'Calendar days (as in the PUR Process sheet)',
-                    'Working days (skip weekends & holidays)'
-                  ][i],
-                  style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                      color: Color.lerp(DsColors.muted, DsColors.navyDeep, t))),
-            ),
-            onSelect: (i) => unawaited(saveSettings(
-                {'workflow.dayMode': i == 1 ? 'WORKING' : 'CALENDAR'})),
-          ),
+          const DsCardTitle('"Due soon" alert', icon: Icons.timelapse),
+          const SizedBox(height: 4),
+          const Text(
+              'A step turns "due soon" this many days before its due date — on the dashboard, in the PO list and in the daily email.',
+              style: DsType.meta),
           const SizedBox(height: 12),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            value: values['workflow.useMaterialLeadTime'] == true,
-            title: const Text('Use the material lead time for the ETA',
-                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
-            subtitle: const Text(
-                'On: the S/I step is stretched so the goods arrive on PO date + the longest lead time of the PO\'s materials. '
-                'Off: the fixed day counts of the workflow are used for every PO.',
-                style: DsType.metaSm),
-            onChanged: (v) =>
-                unawaited(saveSettings({'workflow.useMaterialLeadTime': v})),
-          ),
-          const SizedBox(height: 10),
           Wrap(
               spacing: 14,
               runSpacing: 12,
               crossAxisAlignment: WrapCrossAlignment.end,
               children: [
-                numberField('Default lead time (days)', defaultLead, '75'),
-                numberField('Shortest S/I step (days)', minFlex, '5'),
-                numberField('"Due soon" warning (days ahead)', dueSoon, '3'),
+                SizedBox(
+                  width: 220,
+                  child: DsLabeledField(
+                    label: 'Days ahead',
+                    child: TextField(
+                      controller: dueSoon,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(3)
+                      ],
+                      decoration: dsInput(hint: '3'),
+                    ),
+                  ),
+                ),
                 DsPrimaryButton(
                   label: 'Save',
                   icon: Icons.save_outlined,
@@ -522,142 +610,278 @@ class _SchedulingSettingsState extends State<_SchedulingSettings>
                   onPressed: saving
                       ? null
                       : () => unawaited(saveSettings({
-                            'workflow.defaultLeadTimeDays':
-                                int.tryParse(defaultLead.text) ?? 0,
-                            'workflow.minFlexDays':
-                                int.tryParse(minFlex.text) ?? 0,
                             'alert.dueSoonDays':
                                 int.tryParse(dueSoon.text) ?? 0,
                           })),
                 ),
               ]),
-          const SizedBox(height: 12),
-          const InfoStrip(
-            text:
-                'Default lead time is used when neither the materials nor the supplier have one. '
-                'Changing how days are counted re-plans every open PO in this section.',
-          ),
-        ]),
-      ),
-      const SizedBox(height: 16),
-      DsCard(
-        child: Row(children: [
-          const Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Re-plan open POs', style: DsType.cardTitle),
-              SizedBox(height: 4),
-              Text(
-                  'After changing lead times in the Material Master, re-plan every open PO with the current rules. '
-                  'Steps already done keep their dates.',
-                  style: DsType.meta),
-            ]),
-          ),
-          DsOutlineButton(
-            label: 'Re-plan now',
-            icon: Icons.sync,
-            height: 40,
-            onPressed: () async {
-              if (!await confirmAction(context,
-                  title: 'Re-plan all open POs?',
-                  message: 'Due dates and ETAs of open steps are recalculated.',
-                  confirmLabel: 'Re-plan')) {
-                return;
-              }
-              if (!context.mounted) return;
-              final r = await guard(
-                  context,
-                  () => AppScope.read(context)
-                      .api
-                      .postJson('/workflow/recalculate', {}));
-              if (r != null && context.mounted) {
-                AppToast.success(
-                    context, '${r['recalculated']} open PO(s) re-planned');
-              }
-            },
-          ),
         ]),
       ),
     ]);
   }
 }
 
-class _ImportHistory extends StatefulWidget {
-  const _ImportHistory();
+typedef _PageFetch = Future<(List<Map<String, dynamic>>, int)?> Function(
+    int page, int pageSize);
+
+/// Rows fetched from the server a page at a time. With [fill] the list takes
+/// the height it is given and a page is however many [rowHeight] rows fit, so
+/// the card ends at the bottom of the screen and you turn pages instead of
+/// scrolling; otherwise a page is [pageSize] rows.
+class _PagedRows extends StatefulWidget {
+  const _PagedRows({
+    super.key,
+    required this.fetch,
+    required this.rowBuilder,
+    required this.rowHeight,
+    required this.skeleton,
+    this.fill = false,
+    this.pageSize = 15,
+    this.empty = 'Nothing yet',
+    this.reloadKey,
+    this.onTotal,
+  });
+
+  final _PageFetch fetch;
+  final Widget Function(Map<String, dynamic> row) rowBuilder;
+  final double rowHeight;
+  final List<DsSkelCol> skeleton;
+  final bool fill;
+  final int pageSize;
+  final String empty;
+
+  /// Change it (a new search, a filter) to go back to page 1 and reload.
+  final Object? reloadKey;
+  final ValueChanged<int>? onTotal;
+
   @override
-  State<_ImportHistory> createState() => _ImportHistoryState();
+  State<_PagedRows> createState() => _PagedRowsState();
 }
 
-class _ImportHistoryState extends State<_ImportHistory> {
+class _PagedRowsState extends State<_PagedRows> {
+  // PaginationBar's own height, kept free even when it hides itself, so the
+  // page size does not change as the bar comes and goes.
+  static const _barHeight = 57.0;
+
   List<Map<String, dynamic>>? rows;
+  int total = 0;
+  int page = 1;
+
+  /// Null until a [fill] list knows its height.
+  int? size;
+  int _seq = 0;
+  Timer? _refit;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(load()));
-  }
-
-  Future<void> load() async {
-    final r = await guard(context,
-        () => AppScope.read(context).api.getJson('/pos/import/batches'));
-    if (r != null && mounted) {
-      setState(() => rows = (r['data'] as List)
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList());
+    if (!widget.fill) {
+      size = widget.pageSize;
+      WidgetsBinding.instance.addPostFrameCallback((_) => reload());
     }
   }
 
   @override
+  void didUpdateWidget(_PagedRows old) {
+    super.didUpdateWidget(old);
+    if (old.reloadKey != widget.reloadKey) {
+      page = 1;
+      reload();
+    }
+  }
+
+  @override
+  void dispose() {
+    _refit?.cancel();
+    super.dispose();
+  }
+
+  /// Fetches the current page again.
+  void reload() => unawaited(_load());
+
+  Future<void> _load() async {
+    final n = size;
+    if (n == null) return;
+    final seq = ++_seq;
+    final r = await widget.fetch(page, n);
+    if (!mounted || seq != _seq || r == null) return;
+    final pages = max(1, (r.$2 / n).ceil());
+    if (page > pages) {
+      // Rows went away (or the page grew) — show the last page instead.
+      page = pages;
+      return _load();
+    }
+    setState(() {
+      rows = r.$1;
+      total = r.$2;
+    });
+    widget.onTotal?.call(r.$2);
+  }
+
+  void _fit(double height) {
+    final n = max(1, (height / widget.rowHeight + 0.001).floor());
+    if (n == size) return;
+    final first = (page - 1) * (size ?? n);
+    final firstFit = size == null;
+    size = n;
+    page = first ~/ n + 1;
+    _refit?.cancel();
+    // The first fit loads straight away; a window being resized waits until
+    // it settles.
+    _refit = Timer(firstFit ? Duration.zero : const Duration(milliseconds: 200),
+        () {
+      if (mounted) reload();
+    });
+  }
+
+  Widget _list(int visible) {
+    if (rows == null) {
+      return DsSkeletonRows(
+          rows: visible,
+          rowHeight: widget.rowHeight,
+          padding: EdgeInsets.zero,
+          columns: widget.skeleton);
+    }
+    if (rows!.isEmpty) {
+      return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(widget.empty, style: DsType.meta));
+    }
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      for (final r in rows!)
+        SizedBox(height: widget.rowHeight, child: widget.rowBuilder(r)),
+    ]);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return PageBody(children: [
-      DsCard(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const DsCardTitle('Excel uploads', icon: Icons.upload_file),
-          const SizedBox(height: 4),
-          const Text(
-              'Every uploaded file is kept exactly as it was, and every column of every PO line is stored with the PO.',
-              style: DsType.meta),
-          const SizedBox(height: 12),
-          if (rows == null) const DsSkeletonList(rows: 4),
-          if (rows != null && rows!.isEmpty)
-            const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('No upload yet', style: DsType.meta)),
-          for (final b in rows ?? const <Map<String, dynamic>>[])
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              decoration: const BoxDecoration(
-                  border: Border(bottom: BorderSide(color: DsColors.lineSoft))),
-              child: Row(children: [
-                const Icon(Icons.description_outlined, color: DsColors.greenFg),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('${b['fileName']}', style: DsType.rowTitle),
-                        Text(
-                            '${fmtDateTime(b['createdAt'])} · ${b['uploadedBy'] ?? '-'} · sheet "${b['sheetName'] ?? '-'}"',
-                            style: DsType.metaSm),
-                      ]),
-                ),
-                SizedBox(
-                    width: 260,
-                    child: Text(
-                        '${b['totalRows']} lines · ${b['created']} POs created · ${b['skipped']} skipped',
-                        style: DsType.meta)),
-                if (b['hasFile'] == true)
-                  DsIconButton(
-                    icon: Icons.download_outlined,
-                    tooltip: 'Download the original file',
-                    onTap: () => unawaited(downloadFromApi(
-                        context,
-                        '/pos/import/batches/${b['id']}/file',
-                        '${b['fileName']}')),
-                  ),
-              ]),
-            ),
-        ]),
+    final bar = PaginationBar(
+      page: page - 1,
+      totalItems: total,
+      pageSize: size ?? widget.pageSize,
+      onChanged: (p) {
+        page = p + 1;
+        reload();
+      },
+    );
+    if (!widget.fill) {
+      return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [_list(widget.pageSize), bar]);
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Expanded(
+        child: LayoutBuilder(builder: (context, box) {
+          _fit(box.maxHeight);
+          return ClipRect(
+            child: Align(alignment: Alignment.topCenter, child: _list(size!)),
+          );
+        }),
+      ),
+      SizedBox(height: _barHeight, child: bar),
+    ]);
+  }
+}
+
+/// A settings tab that is one card as tall as the screen — the logs.
+class _FillCard extends StatelessWidget {
+  const _FillCard({required this.children});
+
+  /// The card's content; one of them should be an [Expanded] list.
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(22, 18, 22, 22),
+      child: DsCard(
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start, children: children),
+      ),
+    );
+  }
+}
+
+List<Map<String, dynamic>> _rowsOf(Map<String, dynamic> r) =>
+    (r['data'] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+
+class _ImportHistory extends StatelessWidget {
+  const _ImportHistory();
+
+  @override
+  Widget build(BuildContext context) {
+    return _FillCard(children: [
+      const DsCardTitle('Excel uploads', icon: Icons.upload_file),
+      const SizedBox(height: 4),
+      const Text(
+          'Every uploaded file is kept exactly as it was, and every column of every PO line is stored with the PO.',
+          style: DsType.meta),
+      const SizedBox(height: 12),
+      Expanded(
+        child: _PagedRows(
+          fill: true,
+          rowHeight: 56,
+          empty: 'No upload yet',
+          fetch: (page, size) async {
+            final r = await guard(
+                context,
+                () => AppScope.read(context).api.getJson(
+                    '/pos/import/batches${qs({'page': page, 'pageSize': size})}'));
+            return r == null ? null : (_rowsOf(r), intFrom(r['total']) ?? 0);
+          },
+          skeleton: [
+            DsSkelCol((_) => DsSkel.icon(22), width: 34),
+            DsSkelCol((i) =>
+                DsSkel.lines(DsSkel.vary(i, 210), DsSkel.vary(i + 3, 300))),
+            DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 1, 220, .2)),
+                width: 260),
+            DsSkelCol((_) => DsSkel.icon(18),
+                width: 36, align: Alignment.center),
+          ],
+          rowBuilder: (b) => Container(
+            decoration: const BoxDecoration(
+                border: Border(bottom: BorderSide(color: DsColors.lineSoft))),
+            child: Row(children: [
+              const Icon(Icons.description_outlined, color: DsColors.greenFg),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('${b['fileName']}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: DsType.rowTitle),
+                      Text(
+                          '${fmtDateTime(b['createdAt'])} · ${b['uploadedBy'] ?? '-'} · sheet "${b['sheetName'] ?? '-'}"',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: DsType.metaSm),
+                    ]),
+              ),
+              SizedBox(
+                  width: 260,
+                  child: Text(
+                      '${b['totalRows']} lines · ${b['created']} POs created · ${b['skipped']} skipped',
+                      style: DsType.meta)),
+              SizedBox(
+                width: 36,
+                child: b['hasFile'] == true
+                    ? DsIconButton(
+                        icon: Icons.download_outlined,
+                        tooltip: 'Download the original file',
+                        onTap: () => unawaited(downloadFromApi(
+                            context,
+                            '/pos/import/batches/${b['id']}/file',
+                            '${b['fileName']}')),
+                      )
+                    : null,
+              ),
+            ]),
+          ),
+        ),
       ),
     ]);
   }
@@ -670,23 +894,7 @@ class _MailLog extends StatefulWidget {
 }
 
 class _MailLogState extends State<_MailLog> {
-  List<Map<String, dynamic>>? rows;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(load()));
-  }
-
-  Future<void> load() async {
-    final r = await guard(
-        context, () => AppScope.read(context).api.getJson('/settings/outbox'));
-    if (r != null && mounted) {
-      setState(() => rows = (r['data'] as List)
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList());
-    }
-  }
+  final _rows = GlobalKey<_PagedRowsState>();
 
   Future<void> open(int id) async {
     final r = await guard(context,
@@ -705,24 +913,41 @@ class _MailLogState extends State<_MailLog> {
           'pending_config' || 'queued' => (DsColors.amberFg, DsColors.amberBg),
           _ => (DsColors.muted, DsColors.chip),
         };
-    return PageBody(children: [
-      DsCard(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          DsCardTitle('Mail log (last 100)',
-              icon: Icons.outbox_outlined,
-              trailing: DsIconButton(
-                  icon: Icons.refresh, tooltip: 'Reload', onTap: load)),
-          const SizedBox(height: 10),
-          if (rows == null) const DsSkeletonList(rows: 4),
-          if (rows != null && rows!.isEmpty)
-            const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('No mail yet', style: DsType.meta)),
-          for (final m in rows ?? const <Map<String, dynamic>>[])
-            InkWell(
+    return _FillCard(children: [
+      DsCardTitle('Mail log',
+          icon: Icons.outbox_outlined,
+          trailing: DsIconButton(
+              icon: Icons.refresh,
+              tooltip: 'Reload',
+              onTap: () => _rows.currentState?.reload())),
+      const SizedBox(height: 10),
+      Expanded(
+        child: _PagedRows(
+          key: _rows,
+          fill: true,
+          rowHeight: 54,
+          empty: 'No mail yet',
+          fetch: (page, size) async {
+            final r = await guard(
+                context,
+                () => AppScope.read(context).api.getJson(
+                    '/settings/outbox${qs({'page': page, 'pageSize': size})}'));
+            return r == null ? null : (_rowsOf(r), intFrom(r['total']) ?? 0);
+          },
+          skeleton: [
+            DsSkelCol((_) => DsSkel.line(100, height: 9), width: 130),
+            DsSkelCol((i) => DsSkel.line(DsSkel.vary(i, 84, .3)), width: 130),
+            DsSkelCol((i) =>
+                DsSkel.lines(DsSkel.vary(i + 2, 300), DsSkel.vary(i + 5, 180))),
+            DsSkelCol((i) => DsSkel.tag(DsSkel.vary(i + 1, 42, .3)),
+                width: 60, align: Alignment.centerRight),
+          ],
+          rowBuilder: (m) {
+            final error = m['error'];
+            return InkWell(
               onTap: () => open(intFrom(m['id'])!),
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
                 decoration: const BoxDecoration(
                     border:
                         Border(bottom: BorderSide(color: DsColors.lineSoft))),
@@ -737,22 +962,30 @@ class _MailLogState extends State<_MailLog> {
                           style: mono(size: 11, weight: FontWeight.w600))),
                   Expanded(
                     child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text('${m['subject']}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: DsType.rowTitle),
-                          Text('${m['to'] ?? '-'}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: DsType.metaSm),
-                          if (m['error'] != null)
-                            Text('${m['error']}',
-                                maxLines: 2,
+                          // A failed mail shows why instead of whom; the
+                          // tooltip has both.
+                          Tooltip(
+                            message: error == null
+                                ? '${m['to'] ?? '-'}'
+                                : '${m['to'] ?? '-'}\n$error',
+                            child: Text(
+                                error == null
+                                    ? '${m['to'] ?? '-'}'
+                                    : '$error',
+                                maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    fontSize: 11, color: DsColors.redFg)),
+                                style: error == null
+                                    ? DsType.metaSm
+                                    : const TextStyle(
+                                        fontSize: 11, color: DsColors.redFg)),
+                          ),
                         ]),
                   ),
                   DsTag('${m['status']}',
@@ -760,8 +993,9 @@ class _MailLogState extends State<_MailLog> {
                       bg: colors('${m['status']}').$2),
                 ]),
               ),
-            ),
-        ]),
+            );
+          },
+        ),
       ),
     ]);
   }
@@ -769,24 +1003,20 @@ class _MailLogState extends State<_MailLog> {
 
 class _ActivityLog extends StatefulWidget {
   const _ActivityLog({required this.system});
+
+  /// The whole-system log under System status: 15 a page inside that page.
+  /// Otherwise this section's log, as tall as the screen.
   final bool system;
   @override
   State<_ActivityLog> createState() => _ActivityLogState();
 }
 
 class _ActivityLogState extends State<_ActivityLog> {
-  List<Map<String, dynamic>>? rows;
   int total = 0;
-  int page = 1;
   bool securityOnly = false;
+  String q = '';
   final search = TextEditingController();
   Timer? _debounce;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(load()));
-  }
 
   @override
   void dispose() {
@@ -795,279 +1025,130 @@ class _ActivityLogState extends State<_ActivityLog> {
     super.dispose();
   }
 
-  Future<void> load() async {
+  Future<(List<Map<String, dynamic>>, int)?> _fetch(int page, int size) async {
     final base = widget.system ? '/admin/audit' : '/settings/audit';
     final r = await guard(
         context,
         () => AppScope.read(context).api.getJson('$base${qs({
-                  'q': search.text.trim(),
+                  'q': q,
                   'page': page,
-                  'pageSize': 50,
+                  'pageSize': size,
                   if (widget.system && securityOnly) 'security': 'true',
                 })}'));
-    if (r != null && mounted) {
-      setState(() {
-        rows = (r['data'] as List)
-            .map((e) => Map<String, dynamic>.from(e as Map))
-            .toList();
-        total = intFrom(r['total']) ?? 0;
-      });
-    }
+    return r == null ? null : (_rowsOf(r), intFrom(r['total']) ?? 0);
   }
+
+  Widget _row(Map<String, dynamic> a) => Container(
+        decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: DsColors.lineSoft))),
+        child: Row(children: [
+          SizedBox(
+              width: 130,
+              child: Text(fmtDateTime(a['at']), style: DsType.metaSm)),
+          SizedBox(
+              width: 140,
+              child: Text('${a['actorName'] ?? '-'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: DsType.rowTitle)),
+          SizedBox(
+            width: 170,
+            child: Text('${a['action']}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: mono(
+                    size: 11.5,
+                    weight: FontWeight.w700,
+                    color: '${a['action']}'.contains('FAIL') ||
+                            '${a['action']}'.contains('LOCK')
+                        ? DsColors.redFg
+                        : DsColors.navyDeep)),
+          ),
+          SizedBox(
+              width: 160,
+              child: Text('${a['entityType']} ${a['entityId'] ?? ''}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: DsType.meta)),
+          Expanded(
+              child: Text('${a['detail'] ?? ''}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: DsType.metaSm)),
+          SizedBox(
+              width: 120,
+              child: Text('${a['ip'] ?? ''}',
+                  textAlign: TextAlign.right, style: DsType.metaSm)),
+        ]),
+      );
 
   @override
   Widget build(BuildContext context) {
-    final body = DsCard(
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        DsCardTitle(
-            widget.system
-                ? 'Whole-system activity log'
-                : 'Activity log — this section',
-            icon: Icons.history),
-        const SizedBox(height: 10),
-        Row(children: [
-          SizedBox(
-            width: 300,
-            child: TextField(
-              controller: search,
-              decoration: dsInput(
-                  hint: 'Search action, user, ID, IP…', icon: Icons.search),
-              onChanged: (_) {
-                _debounce?.cancel();
-                _debounce = Timer(const Duration(milliseconds: 350), () {
-                  page = 1;
-                  unawaited(load());
-                });
-              },
-            ),
-          ),
-          if (widget.system) ...[
-            const SizedBox(width: 10),
-            FilterChip(
-              label: const Text('Security events only'),
-              selected: securityOnly,
-              onSelected: (v) {
-                securityOnly = v;
-                page = 1;
-                unawaited(load());
-              },
-            ),
-          ],
-          const Spacer(),
-          Text(plural(total, 'entry', 'entries'), style: DsType.meta),
-        ]),
-        const SizedBox(height: 10),
-        if (rows == null) const DsSkeletonList(rows: 6),
-        for (final a in rows ?? const <Map<String, dynamic>>[])
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            decoration: const BoxDecoration(
-                border: Border(bottom: BorderSide(color: DsColors.lineSoft))),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              SizedBox(
-                  width: 130,
-                  child: Text(fmtDateTime(a['at']), style: DsType.metaSm)),
-              SizedBox(
-                  width: 140,
-                  child: Text('${a['actorName'] ?? '-'}',
-                      overflow: TextOverflow.ellipsis, style: DsType.rowTitle)),
-              SizedBox(
-                width: 170,
-                child: Text('${a['action']}',
-                    style: mono(
-                        size: 11.5,
-                        weight: FontWeight.w700,
-                        color: '${a['action']}'.contains('FAIL') ||
-                                '${a['action']}'.contains('LOCK')
-                            ? DsColors.redFg
-                            : DsColors.navyDeep)),
-              ),
-              SizedBox(
-                  width: 160,
-                  child: Text('${a['entityType']} ${a['entityId'] ?? ''}',
-                      overflow: TextOverflow.ellipsis, style: DsType.meta)),
-              Expanded(
-                  child: Text('${a['detail'] ?? ''}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: DsType.metaSm)),
-              SizedBox(
-                  width: 120,
-                  child: Text('${a['ip'] ?? ''}',
-                      textAlign: TextAlign.right, style: DsType.metaSm)),
-            ]),
-          ),
-        const SizedBox(height: 8),
-        Align(
-          alignment: Alignment.centerRight,
-          child: PaginationBar(
-            page: page - 1,
-            totalItems: total,
-            pageSize: 50,
-            onChanged: (p) {
-              page = p + 1;
-              unawaited(load());
+    final rows = _PagedRows(
+      fill: !widget.system,
+      pageSize: 15,
+      rowHeight: 44,
+      empty: 'No activity found',
+      reloadKey: (q, securityOnly),
+      onTotal: (n) {
+        if (n != total) setState(() => total = n);
+      },
+      fetch: _fetch,
+      rowBuilder: _row,
+      skeleton: [
+        DsSkelCol((_) => DsSkel.line(100, height: 9), width: 130),
+        DsSkelCol((i) => DsSkel.line(DsSkel.vary(i, 92), height: 11),
+            width: 140),
+        DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 3, 120)), width: 170),
+        DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 1, 96)), width: 160),
+        DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 4, 320), height: 9)),
+        DsSkelCol((_) => DsSkel.line(78, height: 9),
+            width: 120, align: Alignment.centerRight),
+      ],
+    );
+    final head = [
+      DsCardTitle(
+          widget.system
+              ? 'Whole-system activity log'
+              : 'Activity log — this section',
+          icon: Icons.history),
+      const SizedBox(height: 10),
+      Row(children: [
+        SizedBox(
+          width: 300,
+          child: TextField(
+            controller: search,
+            decoration: dsInput(
+                hint: 'Search action, user, ID, IP…', icon: Icons.search),
+            onChanged: (_) {
+              _debounce?.cancel();
+              _debounce = Timer(const Duration(milliseconds: 350), () {
+                if (mounted) setState(() => q = search.text.trim());
+              });
             },
           ),
         ),
+        if (widget.system) ...[
+          const SizedBox(width: 10),
+          FilterChip(
+            label: const Text('Security events only'),
+            selected: securityOnly,
+            onSelected: (v) => setState(() => securityOnly = v),
+          ),
+        ],
+        const Spacer(),
+        Text(plural(total, 'entry', 'entries'), style: DsType.meta),
       ]),
-    );
-    return widget.system ? body : PageBody(children: [body]);
-  }
-}
-
-class _SectionsAdmin extends StatefulWidget {
-  const _SectionsAdmin();
-  @override
-  State<_SectionsAdmin> createState() => _SectionsAdminState();
-}
-
-class _SectionsAdminState extends State<_SectionsAdmin> {
-  List<Map<String, dynamic>>? rows;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(load()));
-  }
-
-  Future<void> load() async {
-    final r = await guard(
-        context, () => AppScope.read(context).api.getJson('/admin/sections'));
-    if (r != null && mounted) {
-      setState(() => rows = (r['data'] as List)
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList());
+      const SizedBox(height: 10),
+    ];
+    if (!widget.system) {
+      return _FillCard(children: [...head, Expanded(child: rows)]);
     }
-  }
-
-  Future<void> edit([Map<String, dynamic>? s]) async {
-    final api = AppScope.read(context).api;
-    final code = TextEditingController(text: '${s?['code'] ?? ''}');
-    final name = TextEditingController(text: '${s?['name'] ?? ''}');
-    final desc = TextEditingController(text: '${s?['description'] ?? ''}');
-    bool active = s?['isActive'] != false;
-    String? error;
-    final ok = await showGlassDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-          builder: (ctx, setState) => AppDialog(
-                title: s == null ? 'New section' : 'Edit section ${s['code']}',
-                icon: Icons.apartment,
-                width: 480,
-                body: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (s == null)
-                        DsLabeledField(
-                            label: 'Code (cannot change later)',
-                            child: TextField(
-                                controller: code,
-                                decoration: dsInput(hint: 'PUR2'))),
-                      const SizedBox(height: 12),
-                      DsLabeledField(
-                          label: 'Name',
-                          child: TextField(
-                              controller: name,
-                              decoration: dsInput(hint: 'Purchase — Rayong'))),
-                      const SizedBox(height: 12),
-                      DsLabeledField(
-                          label: 'Description',
-                          child: TextField(
-                              controller: desc, decoration: dsInput())),
-                      if (s != null)
-                        SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            value: active,
-                            title: const Text('Active'),
-                            onChanged: (v) => setState(() => active = v)),
-                      if (s == null)
-                        const Padding(
-                          padding: EdgeInsets.only(top: 10),
-                          child: InfoStrip(
-                              text:
-                                  'A new section starts with the default 9-step workflow and empty masters. You are added as its section admin.'),
-                        ),
-                      if (error != null) ...[
-                        const SizedBox(height: 10),
-                        InfoStrip(
-                            text: error!,
-                            icon: Icons.error_outline,
-                            color: DsColors.redFg)
-                      ],
-                    ]),
-                actions: [
-                  DsOutlineButton(
-                      label: 'Cancel',
-                      height: 40,
-                      onPressed: () => Navigator.pop(ctx, false)),
-                  DsPrimaryButton(
-                    label: 'Save',
-                    height: 40,
-                    onPressed: () async {
-                      try {
-                        if (s == null) {
-                          await api.postJson('/admin/sections', {
-                            'code': code.text.trim(),
-                            'name': name.text.trim(),
-                            'description': desc.text.trim()
-                          });
-                        } else {
-                          await api.patchJson('/admin/sections/${s['id']}', {
-                            'name': name.text.trim(),
-                            'description': desc.text.trim(),
-                            'isActive': active
-                          });
-                        }
-                        if (ctx.mounted) Navigator.pop(ctx, true);
-                      } on ApiException catch (e) {
-                        setState(() => error = friendlyError(e.message));
-                      }
-                    },
-                  ),
-                ],
-              )),
+    return DsCard(
+      child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [...head, rows]),
     );
-    if (ok == true) {
-      if (mounted) AppToast.success(context, 'Section saved');
-      unawaited(load());
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return PageBody(children: [
-      DsCard(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          DsCardTitle('Sections',
-              icon: Icons.apartment,
-              trailing: DsPrimaryButton(
-                  label: 'New section',
-                  icon: Icons.add,
-                  height: 36,
-                  onPressed: () => edit())),
-          const SizedBox(height: 4),
-          const Text(
-              'Each section is one purchasing team with its own POs, masters, workflow and email settings.',
-              style: DsType.meta),
-          const SizedBox(height: 12),
-          if (rows == null) const DsSkeletonList(rows: 3),
-          for (final s in rows ?? const <Map<String, dynamic>>[])
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: DsTag('${s['code']}'),
-              title: Text('${s['name']}', style: DsType.rowTitle),
-              subtitle: Text(
-                  '${s['members']} members · ${s['activePos']} open POs${s['isActive'] == true ? '' : ' · inactive'}',
-                  style: DsType.metaSm),
-              trailing: DsIconButton(
-                  icon: Icons.edit_outlined,
-                  tooltip: 'Edit',
-                  onTap: () => edit(s)),
-            ),
-        ]),
-      ),
-    ]);
   }
 }
 
@@ -1080,6 +1161,8 @@ class _HolidaysAdmin extends StatefulWidget {
 class _HolidaysAdminState extends State<_HolidaysAdmin> {
   int year = DateTime.now().year;
   List<Map<String, dynamic>>? rows;
+  bool externalConfigured = true;
+  int _seq = 0;
 
   @override
   void initState() {
@@ -1088,20 +1171,33 @@ class _HolidaysAdminState extends State<_HolidaysAdmin> {
   }
 
   Future<void> load() async {
+    final seq = ++_seq;
     final r = await guard(context,
         () => AppScope.read(context).api.getJson('/admin/holidays?year=$year'));
-    if (r != null && mounted) {
-      setState(() => rows = (r['data'] as List)
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList());
+    if (r != null && mounted && seq == _seq) {
+      setState(() {
+        rows = _rowsOf(r);
+        externalConfigured = r['externalConfigured'] != false;
+      });
     }
+  }
+
+  void _goYear(int y) {
+    setState(() {
+      year = y;
+      rows = null;
+    });
+    unawaited(load());
   }
 
   Future<void> add() async {
     final api = AppScope.read(context).api;
-    DateTime date = DateTime(year, DateTime.now().month, DateTime.now().day);
+    final now = DateTime.now();
+    DateTime date = DateTime(year, now.month, min(now.day, 28));
     final name = TextEditingController();
-    final ok = await showGlassDialog<bool>(
+    String? error;
+    bool busy = false;
+    final added = await showGlassDialog<DateTime>(
       context: context,
       builder: (ctx) => StatefulBuilder(
           builder: (ctx, setState) => AppDialog(
@@ -1119,52 +1215,84 @@ class _HolidaysAdminState extends State<_HolidaysAdmin> {
                                 context: ctx,
                                 initialDate: date,
                                 firstDate: DateTime(2020),
-                                lastDate: DateTime(2035));
-                            if (p != null) setState(() => date = p);
+                                lastDate: DateTime(2035, 12, 31));
+                            if (p != null) {
+                              setState(() {
+                                date = p;
+                                error = null;
+                              });
+                            }
                           },
                           child: InputDecorator(
                               decoration: dsInput(icon: Icons.event),
-                              child: Text(fmtDate(isoDate(date)))),
+                              child: Text(intl.DateFormat('EEEE d MMMM yyyy')
+                                  .format(date))),
                         ),
                       ),
                       const SizedBox(height: 12),
                       DsLabeledField(
-                          label: 'Name',
+                          label: 'Name (optional)',
                           child: TextField(
                               controller: name,
                               decoration: dsInput(hint: 'Songkran'))),
+                      if (error != null) ...[
+                        const SizedBox(height: 10),
+                        InfoStrip(
+                            text: error!,
+                            icon: Icons.error_outline,
+                            color: DsColors.redFg),
+                      ],
                     ]),
                 actions: [
                   DsOutlineButton(
                       label: 'Cancel',
                       height: 40,
-                      onPressed: () => Navigator.pop(ctx, false)),
+                      onPressed: () => Navigator.pop(ctx)),
                   DsPrimaryButton(
-                    label: 'Add',
+                    label: busy ? 'Adding…' : 'Add',
                     height: 40,
-                    onPressed: () async {
-                      if (name.text.trim().isEmpty) return;
-                      try {
-                        await api.postJson('/admin/holidays',
-                            {'date': isoDate(date), 'name': name.text.trim()});
-                        if (ctx.mounted) Navigator.pop(ctx, true);
-                      } on ApiException catch (e) {
-                        if (ctx.mounted) {
-                          AppToast.error(ctx, friendlyError(e.message));
-                        }
-                      }
-                    },
+                    onPressed: busy
+                        ? null
+                        : () async {
+                            setState(() {
+                              busy = true;
+                              error = null;
+                            });
+                            try {
+                              await api.postJson('/admin/holidays', {
+                                'date': isoDate(date),
+                                'name': name.text.trim()
+                              });
+                              if (ctx.mounted) Navigator.pop(ctx, date);
+                            } on ApiException catch (e) {
+                              if (ctx.mounted) {
+                                setState(() {
+                                  busy = false;
+                                  error = friendlyError(e.message);
+                                });
+                              }
+                            }
+                          },
                   ),
                 ],
               )),
     );
-    if (ok == true) unawaited(load());
+    name.dispose();
+    if (added == null || !mounted) return;
+    AppToast.success(context,
+        'Holiday added · ${intl.DateFormat('d MMM yyyy').format(added)}');
+    // Show the year the new day is in.
+    _goYear(added.year);
   }
 
   @override
   Widget build(BuildContext context) {
     final api = AppScope.of(context).api;
+    final list = rows ?? const <Map<String, dynamic>>[];
+    final fromDb = list.where((h) => h['source'] == 'external').length;
     return PageBody(children: [
+      _HolidayDbCard(onSaved: load),
+      const SizedBox(height: 16),
       DsCard(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
@@ -1173,17 +1301,13 @@ class _HolidaysAdminState extends State<_HolidaysAdmin> {
                     icon: Icons.beach_access_outlined)),
             DsIconButton(
                 icon: Icons.chevron_left,
-                onTap: () {
-                  year--;
-                  unawaited(load());
-                }),
+                tooltip: 'Previous year',
+                onTap: () => _goYear(year - 1)),
             Text('$year', style: DsType.cardTitle),
             DsIconButton(
                 icon: Icons.chevron_right,
-                onTap: () {
-                  year++;
-                  unawaited(load());
-                }),
+                tooltip: 'Next year',
+                onTap: () => _goYear(year + 1)),
             const SizedBox(width: 10),
             DsPrimaryButton(
                 label: 'Add holiday',
@@ -1193,41 +1317,268 @@ class _HolidaysAdminState extends State<_HolidaysAdmin> {
           ]),
           const SizedBox(height: 4),
           const Text(
-              'No daily email is sent on these days. In "working days" mode they are also skipped when counting due dates.',
+              'Every day off this year: the ones from the holiday database (read-only — change them in SAR) and the extra days added here. '
+              'On these days no daily email is sent, and the calendar greys them out.',
               style: DsType.meta),
-          const SizedBox(height: 12),
-          if (rows == null) const DsSkeletonList(rows: 3),
-          if (rows != null && rows!.isEmpty)
+          if (rows != null) ...[
+            const SizedBox(height: 6),
+            Text(
+                '${plural(list.length, 'day', 'days')} · $fromDb from the holiday database · ${list.length - fromDb} added here',
+                style: DsType.metaSm),
+          ],
+          if (rows != null && !externalConfigured) ...[
+            const SizedBox(height: 10),
+            const InfoStrip(
+                icon: Icons.cloud_off_outlined,
+                color: DsColors.amberFg,
+                text:
+                    'The holiday database cannot be read right now — only the days added here are listed.'),
+          ],
+          const SizedBox(height: 10),
+          if (rows == null)
+            DsSkeletonRows(
+              rows: 6,
+              rowHeight: 44,
+              padding: EdgeInsets.zero,
+              columns: [
+                DsSkelCol((_) => DsSkel.icon(18), width: 34),
+                DsSkelCol((i) => DsSkel.line(DsSkel.vary(i, 170)), width: 230),
+                DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 3, 140))),
+                DsSkelCol((i) => DsSkel.tag(DsSkel.vary(i + 1, 80, .3)),
+                    width: 130),
+                DsSkelCol((_) => DsSkel.icon(18),
+                    width: 36, align: Alignment.center),
+              ],
+            ),
+          if (rows != null && list.isEmpty)
             const Padding(
                 padding: EdgeInsets.all(16),
-                child: Text('No holidays entered for this year',
-                    style: DsType.meta)),
-          for (final h in rows ?? const <Map<String, dynamic>>[])
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.event_busy, color: DsColors.amberFg),
-              title: Text('${h['name']}', style: DsType.rowTitle),
-              subtitle: Text(
-                  intl.DateFormat('EEEE d MMMM yyyy')
-                      .format(DateTime.parse('${h['date']}')),
-                  style: DsType.metaSm),
-              trailing: DsIconButton(
-                icon: Icons.delete_outline,
-                color: DsColors.redFg,
-                tooltip: 'Remove',
-                onTap: () async {
-                  if (await guard(context,
-                          () => api.deleteJson('/admin/holidays/${h['id']}'),
-                          success: 'Holiday removed') !=
-                      null) {
-                    unawaited(load());
-                  }
-                },
-              ),
+                child: Text('No holidays this year', style: DsType.meta)),
+          for (final h in list)
+            Container(
+              height: 44,
+              decoration: const BoxDecoration(
+                  border: Border(bottom: BorderSide(color: DsColors.lineSoft))),
+              child: Row(children: [
+                SizedBox(
+                  width: 34,
+                  child: Icon(Icons.event_busy,
+                      size: 18,
+                      color: h['source'] == 'external'
+                          ? DsColors.icon
+                          : DsColors.amberFg),
+                ),
+                SizedBox(
+                  width: 230,
+                  child: Text(
+                      intl.DateFormat('EEE d MMMM yyyy')
+                          .format(DateTime.parse('${h['date']}')),
+                      style: DsType.rowTitle),
+                ),
+                Expanded(
+                  child: Text('${h['name'] ?? '-'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: DsType.meta),
+                ),
+                SizedBox(
+                  width: 130,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: h['source'] == 'external'
+                        ? const DsTag('Holiday DB')
+                        : const DsTag('Added here',
+                            color: DsColors.amberFg, bg: DsColors.amberBg),
+                  ),
+                ),
+                SizedBox(
+                  width: 36,
+                  child: h['source'] == 'external'
+                      ? null
+                      : DsIconButton(
+                          icon: Icons.delete_outline,
+                          color: DsColors.redFg,
+                          tooltip: 'Remove',
+                          onTap: () async {
+                            if (await guard(
+                                    context,
+                                    () => api.deleteJson(
+                                        '/admin/holidays/${h['id']}'),
+                                    success: 'Holiday removed') !=
+                                null) {
+                              unawaited(load());
+                            }
+                          },
+                        ),
+                ),
+              ]),
             ),
         ]),
       ),
     ]);
+  }
+}
+
+/// The external holiday DB (SAR · Master_Holiday), shared with RAP.
+/// Credentials and port live in backend/.env; host/database/table are edited
+/// here, and blank fields fall back to .env.
+class _HolidayDbCard extends StatefulWidget {
+  const _HolidayDbCard({this.onSaved});
+
+  /// After a save, so the holiday list reads the new source.
+  final VoidCallback? onSaved;
+  @override
+  State<_HolidayDbCard> createState() => _HolidayDbCardState();
+}
+
+class _HolidayDbCardState extends State<_HolidayDbCard> {
+  final host = TextEditingController();
+  final database = TextEditingController();
+  final table = TextEditingController();
+  bool enabled = true;
+  Map<String, dynamic> defaults = {};
+  bool credentialsSet = true;
+  bool loaded = false;
+  bool saving = false;
+  bool testing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(load()));
+  }
+
+  @override
+  void dispose() {
+    host.dispose();
+    database.dispose();
+    table.dispose();
+    super.dispose();
+  }
+
+  void _apply(Map<String, dynamic> r) {
+    host.text = '${r['host'] ?? ''}';
+    database.text = '${r['database'] ?? ''}';
+    table.text = '${r['table'] ?? ''}';
+    enabled = r['enabled'] != false;
+    defaults = Map<String, dynamic>.from(r['defaults'] as Map? ?? const {});
+    credentialsSet = r['credentialsSet'] == true;
+    loaded = true;
+  }
+
+  Future<void> load() async {
+    final r = await guard(
+        context, () => AppScope.read(context).api.getJson('/admin/holiday-db'));
+    if (r != null && mounted) setState(() => _apply(r));
+  }
+
+  Future<void> _save() async {
+    setState(() => saving = true);
+    final r = await guard(
+        context,
+        () => AppScope.read(context).api.putJson('/admin/holiday-db', {
+              'host': host.text.trim(),
+              'database': database.text.trim(),
+              'table': table.text.trim(),
+              'enabled': enabled,
+            }),
+        success: 'Holiday database settings saved');
+    if (!mounted) return;
+    setState(() {
+      saving = false;
+      if (r != null) _apply(r);
+    });
+    if (r != null) widget.onSaved?.call();
+  }
+
+  Future<void> _test() async {
+    setState(() => testing = true);
+    try {
+      final r =
+          await AppScope.read(context).api.getJson('/admin/holiday-db/verify');
+      if (!mounted) return;
+      final msg = '${r['message'] ?? (r['ok'] == true ? 'Connected' : 'Failed')}';
+      r['ok'] == true
+          ? AppToast.success(context, msg)
+          : AppToast.error(context, msg);
+    } on ApiException catch (e) {
+      if (mounted) AppToast.error(context, friendlyError(e.message));
+    } finally {
+      if (mounted) setState(() => testing = false);
+    }
+  }
+
+  String _hint(String key, String fallback) {
+    final d = '${defaults[key] ?? ''}';
+    return d.isEmpty ? fallback : '$d (from .env)';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DsCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Expanded(
+              child: DsCardTitle('Holiday database (external)',
+                  icon: Icons.storage_outlined)),
+          DsOutlineButton(
+              label: testing ? 'Testing…' : 'Test connection',
+              icon: Icons.wifi_tethering,
+              height: 36,
+              onPressed: testing || !loaded ? null : _test),
+          const SizedBox(width: 8),
+          DsPrimaryButton(
+              label: saving ? 'Saving…' : 'Save',
+              icon: Icons.save_outlined,
+              height: 36,
+              onPressed: saving || !loaded ? null : _save),
+        ]),
+        const SizedBox(height: 4),
+        const Text(
+            'Company holidays come from the same database as RAP (SAR · Master_Holiday). '
+            'User, password and port are set in backend/.env; host, database and table can be changed here.',
+            style: DsType.meta),
+        if (loaded && !credentialsSet) ...[
+          const SizedBox(height: 10),
+          const InfoStrip(
+              icon: Icons.key_off_outlined,
+              color: DsColors.amberFg,
+              text:
+                  'HOLIDAY_SQL_USER / HOLIDAY_SQL_PASSWORD are not set in backend/.env yet.'),
+        ],
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: enabled,
+          title: const Text('Read holidays from this database',
+              style: TextStyle(fontSize: 13)),
+          onChanged: (v) => setState(() => enabled = v),
+        ),
+        Wrap(spacing: 12, runSpacing: 12, children: [
+          SizedBox(
+              width: 260,
+              child: DsLabeledField(
+                  label: 'Host / IP',
+                  child: TextField(
+                      controller: host,
+                      decoration: dsInput(hint: _hint('host', '10.0.0.5'))))),
+          SizedBox(
+              width: 220,
+              child: DsLabeledField(
+                  label: 'Database',
+                  child: TextField(
+                      controller: database,
+                      decoration: dsInput(hint: _hint('database', 'SAR'))))),
+          SizedBox(
+              width: 220,
+              child: DsLabeledField(
+                  label: 'Table',
+                  child: TextField(
+                      controller: table,
+                      decoration:
+                          dsInput(hint: _hint('table', 'Master_Holiday'))))),
+        ]),
+      ]),
+    );
   }
 }
 
@@ -1405,9 +1756,40 @@ class _SystemStatusState extends State<_SystemStatus> {
                 },
               )),
           const SizedBox(height: 10),
-          if (d == null)
-            const DsSkeletonList(rows: 4)
-          else ...[
+          if (d == null) ...[
+            // kv() rows, then the count tiles.
+            DsSkeletonRows(
+              rows: 6,
+              rowHeight: 30,
+              padding: EdgeInsets.zero,
+              divider: false,
+              fade: false,
+              columns: [
+                DsSkelCol((i) => DsSkel.line(DsSkel.vary(i, 100)), width: 200),
+                DsSkelCol((_) => DsSkel.circle(8), width: 16),
+                DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 3, 230), height: 11)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(spacing: 10, runSpacing: 10, children: [
+              for (var i = 0; i < 6; i++)
+                Container(
+                  width: 140,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                      color: DsColors.subtle,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: DsColors.cardBorder)),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        DsSkel.box(DsSkel.vary(i, 34, .5), 20, radius: 5),
+                        const SizedBox(height: 6),
+                        DsSkel.line(DsSkel.vary(i + 2, 72), height: 9),
+                      ]),
+                ),
+            ]),
+          ] else ...[
             kv('Database', '${d['database']}'),
             kv(
                 'SMTP',
@@ -1431,7 +1813,6 @@ class _SystemStatusState extends State<_SystemStatus> {
             Wrap(spacing: 10, runSpacing: 10, children: [
               for (final e in [
                 ('Users', counts['users']),
-                ('Sections', counts['sections']),
                 ('POs', counts['pos']),
                 ('Open POs', counts['active_pos']),
                 ('Suppliers', counts['suppliers']),
@@ -1459,5 +1840,109 @@ class _SystemStatusState extends State<_SystemStatus> {
       const SizedBox(height: 16),
       const _ActivityLog(system: true),
     ]);
+  }
+}
+
+/// A settings card while its values load: the real title, then the shapes of
+/// what the card holds — description lines, switch rows,
+/// labelled fields with their Save button, tags, a row of buttons — so the
+/// page lands in place instead of replacing a generic list.
+class _CardGhost extends StatelessWidget {
+  const _CardGhost(
+    this.title,
+    this.icon, {
+    this.lines = 0,
+    this.switches = 0,
+    this.fields = const [],
+    this.save = false,
+    this.tags = 0,
+    this.buttons = 0,
+  });
+
+  final String title;
+  final IconData? icon;
+  final int lines;
+  final int switches;
+
+  /// Field widths; null is a field that takes the rest of the row.
+  final List<double?> fields;
+  final bool save;
+  final int tags;
+  final int buttons;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget field(int k) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DsSkel.line(DsSkel.vary(k, 120, .3), height: 10),
+              const SizedBox(height: 8),
+              DsSkel.fill(42, radius: 10),
+            ]);
+    return DsCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        DsCardTitle(title, icon: icon),
+        for (var k = 0; k < lines; k++) ...[
+          SizedBox(height: k == 0 ? 8 : 6),
+          DsSkel.line(k == lines - 1 && lines > 1 ? 380 : 640, height: 10),
+        ],
+        for (var k = 0; k < switches; k++)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Row(children: [
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: DsSkel.lines(
+                      DsSkel.vary(k, 280, .3), DsSkel.vary(k + 3, 420, .3),
+                      titleH: 12),
+                ),
+              ),
+              const SizedBox(width: 16),
+              DsSkel.chip(40, height: 22),
+            ]),
+          ),
+        // A row with a stretching field is a Row, like the mail card's; one of
+        // fixed fields wraps, like the scheduling card's.
+        if (fields.contains(null)) ...[
+          const SizedBox(height: 10),
+          Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            for (var k = 0; k < fields.length; k++) ...[
+              if (fields[k] == null)
+                Expanded(child: field(k))
+              else
+                SizedBox(width: fields[k], child: field(k)),
+              const SizedBox(width: 12),
+            ],
+            if (save) DsSkel.box(92, 42, radius: 9),
+          ]),
+        ] else if (fields.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Wrap(
+              spacing: 14,
+              runSpacing: 12,
+              crossAxisAlignment: WrapCrossAlignment.end,
+              children: [
+                for (var k = 0; k < fields.length; k++)
+                  SizedBox(width: fields[k], child: field(k)),
+                if (save) DsSkel.box(92, 42, radius: 9),
+              ]),
+        ],
+        if (tags > 0) ...[
+          const SizedBox(height: 12),
+          Wrap(spacing: 6, runSpacing: 6, children: [
+            for (var k = 0; k < tags; k++) DsSkel.tag(DsSkel.vary(k, 160, .5)),
+          ]),
+        ],
+        if (buttons > 0) ...[
+          const SizedBox(height: 12),
+          Wrap(spacing: 10, runSpacing: 10, children: [
+            for (var k = 0; k < buttons; k++)
+              DsSkel.box(DsSkel.vary(k, 180, .4), 38, radius: 9),
+          ]),
+        ],
+      ]),
+    );
   }
 }

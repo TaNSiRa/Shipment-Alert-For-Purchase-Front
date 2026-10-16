@@ -3,16 +3,15 @@ part of '../main.dart';
 const String kPasswordRuleHint =
     'At least 8 characters, with a letter and a number';
 
-/// Client-side copy of the server rule, so the form can say what is wrong
-/// before the round trip. The server still decides.
+/// Client-side copy of the server rule (RAP's, word for word), so the form can
+/// say what is wrong before the round trip. The server still decides — it
+/// also refuses the most common passwords.
 String? passwordPolicyProblem(String password) {
-  if (password.length < 8) return 'At least 8 characters';
-  if (password.length > 128) return 'At most 128 characters';
-  if (password.trim() != password) return 'No spaces at the start or end';
-  if (!RegExp(r'[A-Za-z]').hasMatch(password)) {
-    return 'Needs at least one letter';
-  }
-  if (!RegExp(r'[0-9]').hasMatch(password)) return 'Needs at least one number';
+  if (password.length < 8) return 'Password must be at least 8 characters long';
+  if (password.length > 128) return 'Password must be at most 128 characters long';
+  if (password.trim() != password) return 'Password must not start or end with a space';
+  if (!RegExp(r'[A-Za-z]').hasMatch(password)) return 'Password must contain at least one letter';
+  if (!RegExp(r'[0-9]').hasMatch(password)) return 'Password must contain at least one number';
   return null;
 }
 
@@ -24,6 +23,8 @@ Future<Map<String, dynamic>?> showFirstPasswordDialog(
   final confirm = TextEditingController();
   String? error;
   bool busy = false;
+  // Hidden at first, but they may look: it is a password never typed before.
+  bool reveal = false;
   return showGlassDialog<Map<String, dynamic>>(
     context: context,
     barrierDismissible: false,
@@ -54,29 +55,39 @@ Future<Map<String, dynamic>?> showFirstPasswordDialog(
         canPop: false,
         child: AppDialog(
           title: 'Choose your own password',
-          subtitle: 'Your account was set up with a temporary password',
+          subtitle: 'Your password was set by an administrator',
           icon: Icons.key_outlined,
           width: 460,
           body:
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             const InfoStrip(
                 text:
-                    'For your security, set a password only you know before using the system. $kPasswordRuleHint.'),
+                    'For your security, set a password only you know before using the system. It must be different from the one you were given.'),
             const SizedBox(height: 16),
             DsLabeledField(
               label: 'New password',
               child: TextField(
                   controller: pass,
-                  obscureText: true,
+                  obscureText: !reveal,
                   autofocus: true,
-                  decoration: dsInput(icon: Icons.lock_outline)),
+                  decoration: dsInput(
+                    icon: Icons.lock_outline,
+                    suffix: IconButton(
+                      tooltip: reveal ? 'Hide password' : 'Show password',
+                      icon: Icon(reveal ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                          size: 19),
+                      onPressed: () => setState(() => reveal = !reveal),
+                    ),
+                  )),
             ),
+            const SizedBox(height: 4),
+            const Text(kPasswordRuleHint, style: DsType.metaSm),
             const SizedBox(height: 12),
             DsLabeledField(
               label: 'Confirm new password',
               child: TextField(
                 controller: confirm,
-                obscureText: true,
+                obscureText: !reveal,
                 onSubmitted: (_) => submit(),
                 decoration: dsInput(icon: Icons.lock_outline, errorText: error),
               ),

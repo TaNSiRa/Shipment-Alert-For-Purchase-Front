@@ -129,13 +129,15 @@ class Panel extends StatelessWidget {
 
 /// How many fixed-height rows fit in the space it is given (RAP's tables:
 /// one screen = one page, no scrolling). Reports the count through [onFit]
-/// after the frame whenever it changes, e.g. on a window resize; the child
-/// is built as usual.
+/// after the frame whenever it changes, e.g. on a window resize. [builder]
+/// gets the row height stretched so that many rows fill the space exactly,
+/// leaving no gap under a full page.
 class DsFitRows extends StatefulWidget {
-  const DsFitRows({super.key, required this.rowHeight, required this.onFit, required this.child});
+  const DsFitRows({super.key, required this.rowHeight, required this.onFit, required this.builder});
+  /// The smallest height a row may have.
   final double rowHeight;
   final ValueChanged<int> onFit;
-  final Widget child;
+  final Widget Function(BuildContext context, double rowHeight) builder;
 
   @override
   State<DsFitRows> createState() => _DsFitRowsState();
@@ -147,14 +149,15 @@ class _DsFitRowsState extends State<DsFitRows> {
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, box) {
-      final fit = box.maxHeight.isFinite ? max(1, (box.maxHeight / widget.rowHeight).floor()) : 20;
+      final finite = box.maxHeight.isFinite;
+      final fit = finite ? max(1, (box.maxHeight / widget.rowHeight).floor()) : 20;
       if (fit != _reported) {
         _reported = fit;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) widget.onFit(fit);
         });
       }
-      return widget.child;
+      return widget.builder(context, finite ? box.maxHeight / fit : widget.rowHeight);
     });
   }
 }
