@@ -4,7 +4,11 @@ part of '../main.dart';
 /// both systems sign in the same way; flip [kUseHalcyonLogin] to false for the
 /// classic two-panel card below ([_classic]).
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key, required this.onLogin, required this.health, this.initialError});
+  const LoginPage(
+      {super.key,
+      required this.onLogin,
+      required this.health,
+      this.initialError});
   final Future<String?> Function(String email, String password) onLogin;
   final Map<String, dynamic> health;
 
@@ -64,7 +68,9 @@ class _LoginPageState extends State<LoginPage> {
     if (busy) return;
     if (kUseHalcyonLogin) {
       setState(() {
-        emailError = email.text.trim().isEmpty ? 'Email or employee no is required' : null;
+        emailError = email.text.trim().isEmpty
+            ? 'Email or employee no is required'
+            : null;
         passwordError = password.text.isEmpty ? 'Password is required' : null;
       });
       if (emailError != null || passwordError != null) return;
@@ -105,6 +111,10 @@ class _LoginPageState extends State<LoginPage> {
     if (!kUseHalcyonLogin) return _classic();
     return AutofillGroup(
       child: HalcyonLoginPage(
+        intro: const _HalcyonIntro(),
+        // The gate's glow turned down to the strength RAP's splash uses: at
+        // full strength the translucent sign-in half washes out over it.
+        bloom: .62,
         email: email,
         password: password,
         passwordFocus: passwordFocus,
@@ -374,7 +384,8 @@ class _MicrosoftMark extends StatelessWidget {
     return SizedBox(
       width: 18,
       height: 18,
-      child: Column(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+      child:
+          Column(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           sq(const Color(0xfff25022)),
           sq(const Color(0xff7fba00)),
@@ -388,20 +399,38 @@ class _MicrosoftMark extends StatelessWidget {
   }
 }
 
-/// Left half of the login card: what the system does, drawn as the shipment's
-/// journey (PO -> supplier -> sea -> customs -> factory).
+// What the system does — told the same way by the classic card's left half
+// ([_LoginHero]) and by the intro beside the Halcyon card ([_HalcyonIntro]).
+const _kLoginBadge = 'PURCHASE · IMPORT SHIPMENTS';
+const _kLoginHeadline =
+    'Know where every\norder is — and when\nit will arrive.';
+const _kLoginBlurb =
+    'Import POs straight from the SAP export, tick each step as it happens, '
+    'and get a daily 08:30 email of what is due and what is late.';
+
+/// The shipment's journey: PO -> supplier -> sea -> customs -> factory.
+/// [_kLoginStopsLive] is the stop drawn as "where it is now".
+const _kLoginStops = [
+  (Icons.receipt_long_outlined, 'Issue PO'),
+  (Icons.mark_email_read_outlined, 'Supplier ACK'),
+  (Icons.directions_boat_outlined, 'Shipping'),
+  (Icons.local_shipping_outlined, 'Clearing'),
+  (Icons.warehouse_outlined, 'Received'),
+];
+const _kLoginStopsLive = 2;
+const _kLoginHighlights = [
+  'Upload the SAP "DATA BY SAP" Excel — no retyping',
+  '9 steps, one input: just mark each step done',
+  'Overdue alerts, road map and a month-end email',
+];
+
+/// Left half of the classic login card.
 class _LoginHero extends StatelessWidget {
   const _LoginHero();
 
   @override
   Widget build(BuildContext context) {
-    const stops = [
-      (Icons.receipt_long_outlined, 'Issue PO'),
-      (Icons.mark_email_read_outlined, 'Supplier ACK'),
-      (Icons.directions_boat_outlined, 'Shipping'),
-      (Icons.local_shipping_outlined, 'Clearing'),
-      (Icons.warehouse_outlined, 'Received'),
-    ];
+    const stops = _kLoginStops;
     return Container(
       padding: const EdgeInsets.fromLTRB(40, 44, 40, 36),
       decoration: const BoxDecoration(
@@ -440,7 +469,7 @@ class _LoginHero extends StatelessWidget {
             decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: .16),
                 borderRadius: BorderRadius.circular(20)),
-            child: const Text('PURCHASE · IMPORT SHIPMENTS',
+            child: const Text(_kLoginBadge,
                 style: TextStyle(
                     color: Colors.white,
                     fontSize: 10.5,
@@ -448,7 +477,7 @@ class _LoginHero extends StatelessWidget {
                     letterSpacing: 1.1)),
           ),
           const SizedBox(height: 22),
-          const Text('Know where every\norder is — and when\nit will arrive.',
+          const Text(_kLoginHeadline,
               style: TextStyle(
                   color: Colors.white,
                   fontSize: 30,
@@ -456,9 +485,7 @@ class _LoginHero extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                   letterSpacing: -.6)),
           const SizedBox(height: 14),
-          Text(
-              'Import POs straight from the SAP export, tick each step as it happens, '
-              'and get a daily 08:30 email of what is due and what is late.',
+          Text(_kLoginBlurb,
               style: TextStyle(
                   color: Colors.white.withValues(alpha: .86),
                   fontSize: 13.5,
@@ -471,11 +498,14 @@ class _LoginHero extends StatelessWidget {
                   width: 42,
                   height: 42,
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: i == 2 ? .95 : .18),
+                    color: Colors.white
+                        .withValues(alpha: i == _kLoginStopsLive ? .95 : .18),
                     borderRadius: BorderRadius.circular(13),
                   ),
                   child: Icon(stops[i].$1,
-                      size: 21, color: i == 2 ? DsColors.navy : Colors.white),
+                      size: 21,
+                      color:
+                          i == _kLoginStopsLive ? DsColors.navy : Colors.white),
                 ),
                 const SizedBox(height: 7),
                 Text(stops[i].$2,
@@ -490,18 +520,14 @@ class _LoginHero extends StatelessWidget {
                     padding: const EdgeInsets.only(bottom: 20),
                     child: Container(
                         height: 2,
-                        color:
-                            Colors.white.withValues(alpha: i < 2 ? .8 : .28)),
+                        color: Colors.white.withValues(
+                            alpha: i < _kLoginStopsLive ? .8 : .28)),
                   ),
                 ),
             ],
           ]),
           const SizedBox(height: 30),
-          for (final line in const [
-            'Upload the SAP "DATA BY SAP" Excel — no retyping',
-            '9 steps, one input: just mark each step done',
-            'Overdue alerts, road map and a month-end email',
-          ])
+          for (final line in _kLoginHighlights)
             Padding(
               padding: const EdgeInsets.only(bottom: 9),
               child: Row(children: [
@@ -517,5 +543,165 @@ class _LoginHero extends StatelessWidget {
         ]),
       ]),
     );
+  }
+}
+
+/// The same intro as [_LoginHero], redrawn for the Halcyon scene: the left
+/// half of the one login card on a wide screen (the sign-in glass is the
+/// right half). Left out on a narrow screen, like the classic card.
+class _HalcyonIntro extends StatelessWidget {
+  const _HalcyonIntro();
+
+  // A little extra separation for the white text against the fill.
+  static const _lift = [Shadow(color: Color(0x59000000), blurRadius: 12)];
+
+  @override
+  Widget build(BuildContext context) {
+    const stops = _kLoginStops;
+    // A solid fill in the scene's own deep sky (blue by day, violet by
+    // night), so the text never sits over the bright gate behind the card.
+    // The card clips it to the card's rounded left edge.
+    Widget circle(double size, double alpha) => Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white.withValues(alpha: alpha)),
+        );
+    return Stack(children: [
+      Positioned.fill(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                _HcPalette.skyMid.withValues(alpha: .94),
+                _HcPalette.skyTop.withValues(alpha: .96),
+                _HcPalette.water3.withValues(alpha: .98),
+              ],
+            ),
+          ),
+        ),
+      ),
+      Positioned(right: -60, top: -40, child: circle(240, .06)),
+      Positioned(left: -50, bottom: -70, child: circle(200, .05)),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(40, 44, 40, 36),
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: .10),
+                  borderRadius: BorderRadius.circular(20),
+                  border:
+                      Border.all(color: Colors.white.withValues(alpha: .18)),
+                ),
+                child: Text(_kLoginBadge,
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: .9),
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.1)),
+              ),
+              const SizedBox(height: 20),
+              const Text(_kLoginHeadline,
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 30,
+                      height: 1.18,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -.6,
+                      shadows: _lift)),
+              const SizedBox(height: 14),
+              Text(_kLoginBlurb,
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: .80),
+                      fontSize: 13.5,
+                      height: 1.55,
+                      shadows: _lift)),
+              const SizedBox(height: 28),
+              Row(children: [
+                for (var i = 0; i < stops.length; i++) ...[
+                  Column(children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        // The stop the shipment is at wears the Login button's
+                        // gradient; the ones behind it are lit, the ones ahead faint.
+                        gradient: i == _kLoginStopsLive
+                            ? LinearGradient(colors: [
+                                _HcPalette.buttonA,
+                                _HcPalette.buttonB
+                              ])
+                            : null,
+                        color: i == _kLoginStopsLive
+                            ? null
+                            : Colors.white.withValues(
+                                alpha: i < _kLoginStopsLive ? .18 : .10),
+                        borderRadius: BorderRadius.circular(13),
+                        border: i == _kLoginStopsLive
+                            ? null
+                            : Border.all(
+                                color: Colors.white.withValues(alpha: .16)),
+                        boxShadow: i == _kLoginStopsLive
+                            ? [
+                                BoxShadow(
+                                    color: _HcPalette.buttonGlow
+                                        .withValues(alpha: .45),
+                                    blurRadius: 18,
+                                    offset: const Offset(0, 6))
+                              ]
+                            : null,
+                      ),
+                      child: Icon(stops[i].$1,
+                          size: 21,
+                          color: Colors.white.withValues(
+                              alpha: i > _kLoginStopsLive ? .78 : 1)),
+                    ),
+                    const SizedBox(height: 7),
+                    Text(stops[i].$2,
+                        style: TextStyle(
+                            color: Colors.white.withValues(
+                                alpha: i > _kLoginStopsLive ? .74 : .9),
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600)),
+                  ]),
+                  if (i < stops.length - 1)
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 20),
+                        child: Container(
+                            height: 2,
+                            color: Colors.white.withValues(
+                                alpha: i < _kLoginStopsLive ? .7 : .2)),
+                      ),
+                    ),
+                ],
+              ]),
+              const SizedBox(height: 26),
+              for (final line in _kLoginHighlights)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 9),
+                  child: Row(children: [
+                    Icon(Icons.check_circle,
+                        size: 17, color: _HcPalette.inputFocus),
+                    const SizedBox(width: 9),
+                    Expanded(
+                        child: Text(line,
+                            style: TextStyle(
+                                color: Colors.white.withValues(alpha: .92),
+                                fontSize: 13,
+                                shadows: _lift))),
+                  ]),
+                ),
+            ]),
+      ),
+    ]);
   }
 }

@@ -10,7 +10,7 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-enum _Stage { booting, login, consent, sectionPick, app }
+enum _Stage { booting, login, consent, splash, sectionPick, app }
 
 class _AppShellState extends State<AppShell> {
   late final ApiClient api = ApiClient(onUnauthorized: _onUnauthorized);
@@ -31,6 +31,11 @@ class _AppShellState extends State<AppShell> {
 
   /// The PDPA "Accept and continue" request is in flight.
   bool consentBusy = false;
+
+  /// When the splash on screen started (boot counts as one), and whether this
+  /// sign-in has had its splash yet — see [_advanceGates].
+  DateTime _splashSince = DateTime.now();
+  bool _splashDone = false;
 
   Timer? _healthTimer;
   Timer? _idleTimer;
@@ -131,8 +136,8 @@ class _AppShellState extends State<AppShell> {
       _applyLogin(result);
     } catch (_) {
       // No live session: show the login page (after a short beat so the
-      // splash does not flash).
-      final wait = const Duration(milliseconds: 500) - DateTime.now().difference(started);
+      // splash does not flash — long enough for RAP's lockup to surface).
+      final wait = Duration(milliseconds: kSplashWaterEmerge ? 900 : 500) - DateTime.now().difference(started);
       if (wait > Duration.zero) await Future<void>.delayed(wait);
       if (mounted) setState(() => stage = _Stage.login);
     }
@@ -160,7 +165,7 @@ class _AppShellState extends State<AppShell> {
     _advanceGates();
   }
 
-  /// Walks the gates in order: consent -> first password -> section.
+  /// Walks the gates in order: consent -> first password -> splash -> section.
   void _advanceGates() {
     if (!mounted || me == null) return;
     if (me!['pdpaConsentAccepted'] != true) {
@@ -170,6 +175,17 @@ class _AppShellState extends State<AppShell> {
     if (me!['mustChangePassword'] == true) {
       setState(() => stage = _Stage.consent);
       WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_forcePasswordChange()));
+      return;
+    }
+    // RAP's splash, once per sign-in, after the gates (as in RAP). A refresh
+    // that restored the session is already on it (booting) and carries on.
+    if (kSplashWaterEmerge && !_splashDone) {
+      _splashDone = true;
+      if (stage != _Stage.booting) {
+        _splashSince = DateTime.now();
+        setState(() => stage = _Stage.splash);
+      }
+      unawaited(_holdSplash());
       return;
     }
     final sections = (me!['sections'] as List? ?? const []).cast<dynamic>();
@@ -182,6 +198,16 @@ class _AppShellState extends State<AppShell> {
     } else {
       setState(() => stage = _Stage.sectionPick);
     }
+  }
+
+  /// Keeps the splash up for at least 1.5 s (RAP's hold — a fast sign-in
+  /// would otherwise blink it away), then carries on through the gates.
+  Future<void> _holdSplash() async {
+    const minSplash = Duration(milliseconds: 1500);
+    final wait = minSplash - DateTime.now().difference(_splashSince);
+    if (wait > Duration.zero) await Future<void>.delayed(wait);
+    if (!mounted || me == null) return;
+    if (stage == _Stage.splash || stage == _Stage.booting) _advanceGates();
   }
 
   Future<void> acceptConsent() async {
@@ -267,6 +293,7 @@ class _AppShellState extends State<AppShell> {
     api.token = null;
     api.csrfToken = null;
     api.sectionCode = null;
+    _splashDone = false;
     if (!mounted) return;
     setState(() {
       me = null;
@@ -396,7 +423,10 @@ class _AppShellState extends State<AppShell> {
         },
         child: AnimatedSwitcher(
           duration: DsMotion.of(context, DsMotion.page),
-          child: KeyedSubtree(key: ValueKey(stage), child: _stageView()),
+          // Boot and the post-sign-in splash share a key: a refresh that
+          // restores the session runs one splash straight on, with no cut.
+          child: KeyedSubtree(
+              key: ValueKey(stage == _Stage.booting ? _Stage.splash : stage), child: _stageView()),
         ),
       ),
     );
@@ -404,7 +434,10 @@ class _AppShellState extends State<AppShell> {
 
   Widget _stageView() {
     switch (stage) {
+      case _Stage.splash:
+        return const WaterEmergeSplash();
       case _Stage.booting:
+        if (kSplashWaterEmerge) return const WaterEmergeSplash();
         return const Scaffold(
           body: DsAmbient(
             child: Center(child: SizedBox(width: 34, height: 34, child: CircularProgressIndicator(strokeWidth: 3))),

@@ -1625,7 +1625,16 @@ class HalcyonLoginPage extends StatelessWidget {
     required this.onMicrosoftLogin,
     required this.apiOnline,
     required this.sqlOnline,
+    this.intro,
+    this.bloom = 1,
   });
+
+  /// What this system is: the left half of the card on a wide screen, left out
+  /// on a narrow one (like the classic login). Null gives RAP's lone card.
+  final Widget? intro;
+
+  /// Strength of the scene's central light — see [HalcyonScene.bloom].
+  final double bloom;
 
   final TextEditingController email;
   final TextEditingController password;
@@ -1648,24 +1657,24 @@ class HalcyonLoginPage extends StatelessWidget {
   Widget build(BuildContext context) {
     const textStyle = TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500);
 
-    final glass = Container(
-      padding: const EdgeInsets.fromLTRB(30, 32, 30, 28),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.white.withValues(alpha: kHalcyonCardTintTop),
-            Colors.white.withValues(alpha: kHalcyonCardTintBottom),
-          ],
-        ),
-        border: Border.all(color: Colors.white.withValues(alpha: kHalcyonCardBorder), width: 1.2),
-        boxShadow: [
-          BoxShadow(color: _HcPalette.cardShadow, blurRadius: 60, offset: const Offset(0, 28)),
+    final glassDecoration = BoxDecoration(
+      borderRadius: BorderRadius.circular(24),
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Colors.white.withValues(alpha: kHalcyonCardTintTop),
+          Colors.white.withValues(alpha: kHalcyonCardTintBottom),
         ],
       ),
-      child: Column(
+      border: Border.all(color: Colors.white.withValues(alpha: kHalcyonCardBorder), width: 1.2),
+      boxShadow: [
+        BoxShadow(color: _HcPalette.cardShadow, blurRadius: 60, offset: const Offset(0, 28)),
+      ],
+    );
+    const formPadding = EdgeInsets.fromLTRB(30, 32, 30, 28);
+
+    final form = Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1810,46 +1819,63 @@ class HalcyonLoginPage extends StatelessWidget {
             ],
           ),
         ],
-      ),
-    );
+      );
 
     // With the blur off there is nothing for a BackdropFilter to do, and
     // leaving one in would cost the card its cached raster layer — which is
     // exactly what keeps the tilt from shimmering. See [_HalcyonTilt].
-    final card = ClipRRect(
-      borderRadius: BorderRadius.circular(24),
-      child: kHalcyonCardBlur > 0
-          ? BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: kHalcyonCardBlur, sigmaY: kHalcyonCardBlur),
-              child: glass,
-            )
-          : glass,
-    );
+    Widget frosted(Widget glass) => ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: kHalcyonCardBlur > 0
+              ? BackdropFilter(
+                  filter: ui.ImageFilter.blur(sigmaX: kHalcyonCardBlur, sigmaY: kHalcyonCardBlur),
+                  child: glass,
+                )
+              : glass,
+        );
 
     return Scaffold(
       backgroundColor: _HcPalette.pageBg,
       body: HalcyonScene(
+        bloom: bloom,
         child: Stack(children: [
           Positioned.fill(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 400),
-                  // Settles into place on first paint.
-                  child: TweenAnimationBuilder<double>(
-                    tween: Tween(begin: 0, end: 1),
-                    duration: const Duration(milliseconds: 900),
-                    curve: Curves.easeOutCubic,
-                    builder: (_, v, child) => Opacity(
-                      opacity: v,
-                      child: Transform.translate(offset: Offset(0, (1 - v) * 26), child: child),
+            child: LayoutBuilder(builder: (context, constraints) {
+              // One card. On a wide screen with an [intro] it is split like the
+              // classic login: the intro on the left, the sign-in glass on the
+              // right. Narrow (or no intro), it is RAP's lone sign-in card.
+              final split = intro != null && constraints.maxWidth >= 980;
+              final card = split
+                  ? frosted(Container(
+                      decoration: glassDecoration,
+                      child: IntrinsicHeight(
+                        child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                          Expanded(flex: 11, child: intro!),
+                          Expanded(flex: 9, child: Padding(padding: formPadding, child: form)),
+                        ]),
+                      ),
+                    ))
+                  : frosted(Container(padding: formPadding, decoration: glassDecoration, child: form));
+              return Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: split ? 1000 : 400),
+                    // Settles into place on first paint.
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween(begin: 0, end: 1),
+                      duration: const Duration(milliseconds: 900),
+                      curve: Curves.easeOutCubic,
+                      builder: (_, v, child) => Opacity(
+                        opacity: v,
+                        child: Transform.translate(offset: Offset(0, (1 - v) * 26), child: child),
+                      ),
+                      child: _HalcyonSceneShield(child: _HalcyonTilt(child: card)),
                     ),
-                    child: _HalcyonSceneShield(child: _HalcyonTilt(child: card)),
                   ),
                 ),
-              ),
-            ),
+              );
+            }),
           ),
           // Which water the scene is running. Sits above the card's stage so a
           // click on it is a click on the switch, not a stone in the pond.

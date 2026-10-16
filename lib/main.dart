@@ -23,6 +23,7 @@ part 'layout/scroll_behavior.dart';
 part 'pages/login_page.dart';
 part 'pages/login_halcyon.dart';
 part 'pages/login_water.dart';
+part 'pages/splash_emerge.dart';
 part 'pages/account_gates.dart';
 part 'pages/pdpa_consent_page.dart';
 part 'pages/pdpa_policy_text.dart';
