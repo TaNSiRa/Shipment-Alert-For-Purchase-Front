@@ -23,6 +23,8 @@ flutter:
   uses-material-design: true
   assets:
     - logo_tpk.png
+    # Second half of the TPK × Automation lockup on the login card (from RAP).
+    - Automation_Logo.png
   # Same faces as RAP, bundled (no Google Fonts CDN — factory PCs are offline).
   # Anuphan draws Thai and Latin from one family; JetBrains Mono is for numbers.
   # Both SIL OFL 1.1 — see assets/fonts/*-OFL.txt.

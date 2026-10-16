@@ -1,5 +1,8 @@
 part of '../main.dart';
 
+/// The login stage. Shows RAP's "Halcyon Gate" scene (login_halcyon.dart) so
+/// both systems sign in the same way; flip [kUseHalcyonLogin] to false for the
+/// classic two-panel card below ([_classic]).
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key, required this.onLogin, required this.health, this.initialError});
   final Future<String?> Function(String email, String password) onLogin;
@@ -16,15 +19,24 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final email = TextEditingController();
   final password = TextEditingController();
+  final passwordFocus = FocusNode();
   bool busy = false;
   bool obscure = true;
   String? error;
+  String? emailError;
+  String? passwordError;
   bool leaving = false;
 
   @override
   void initState() {
     super.initState();
     error = widget.initialError;
+    // The Halcyon card has no error strip — like RAP, a refusal is a toast.
+    if (kUseHalcyonLogin && error != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) AppToast.error(context, error!);
+      });
+    }
   }
 
   /// Leaves for Microsoft's sign-in page; the API brings the browser back here.
@@ -44,12 +56,19 @@ class _LoginPageState extends State<LoginPage> {
   void dispose() {
     email.dispose();
     password.dispose();
+    passwordFocus.dispose();
     super.dispose();
   }
 
   Future<void> submit() async {
     if (busy) return;
-    if (email.text.trim().isEmpty || password.text.isEmpty) {
+    if (kUseHalcyonLogin) {
+      setState(() {
+        emailError = email.text.trim().isEmpty ? 'Email or employee no is required' : null;
+        passwordError = password.text.isEmpty ? 'Password is required' : null;
+      });
+      if (emailError != null || passwordError != null) return;
+    } else if (email.text.trim().isEmpty || password.text.isEmpty) {
       setState(() => error = 'Enter your email (or employee no.) and password');
       return;
     }
@@ -63,10 +82,62 @@ class _LoginPageState extends State<LoginPage> {
       busy = false;
       error = problem;
     });
+    // The server's own words: a locked account with the right password is
+    // told how long the lock has left, not that the password is wrong.
+    if (kUseHalcyonLogin && problem != null) AppToast.error(context, problem);
+  }
+
+  /// Show/hide the password. Re-focusing after the rebuild matters on the web:
+  /// flipping obscureText swaps the browser's hidden <input>, and without it
+  /// the field can keep a caret while accepting nothing (see RAP app_shell).
+  void toggleObscure() {
+    final hadFocus = passwordFocus.hasFocus;
+    setState(() => obscure = !obscure);
+    if (!hadFocus) return;
+    passwordFocus.unfocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) passwordFocus.requestFocus();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!kUseHalcyonLogin) return _classic();
+    return AutofillGroup(
+      child: HalcyonLoginPage(
+        email: email,
+        password: password,
+        passwordFocus: passwordFocus,
+        obscurePassword: obscure,
+        onToggleObscure: toggleObscure,
+        emailError: emailError,
+        passwordError: passwordError,
+        onEmailChanged: () {
+          if (emailError != null) setState(() => emailError = null);
+        },
+        onPasswordChanged: () {
+          if (passwordError != null) setState(() => passwordError = null);
+        },
+        // Enter signs in when a password is already typed, otherwise it moves
+        // on to the password box.
+        onEmailSubmitted: () {
+          if (password.text.isNotEmpty) {
+            unawaited(submit());
+          } else {
+            passwordFocus.requestFocus();
+          }
+        },
+        busy: busy || leaving,
+        microsoftEnabled: widget.health['microsoftLogin'] == true,
+        onLogin: () => unawaited(submit()),
+        onMicrosoftLogin: signInWithMicrosoft,
+        apiOnline: widget.health['api'] == 'ok',
+        sqlOnline: widget.health['database'] == 'ok',
+      ),
+    );
+  }
+
+  Widget _classic() {
     final wide = MediaQuery.of(context).size.width >= 980;
     return Scaffold(
       body: DsAmbient(
@@ -283,7 +354,7 @@ String microsoftErrorText(String code) {
     case 'NOT_REGISTERED':
       return 'Your Microsoft account is not set up in this system. Ask your section admin to add your work email.';
     case 'LOCKED':
-      return 'This account is locked for a few minutes after too many failed sign-ins.';
+      return 'This account is locked for a few minutes after too many failed sign-ins — wait, or ask a system admin to unlock it.';
     case 'CANCELLED':
       return 'Microsoft sign-in was cancelled.';
     case 'EXPIRED':

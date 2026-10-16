@@ -29,6 +29,9 @@ class _AppShellState extends State<AppShell> {
   /// Shown once on the login page (a failed Microsoft sign-in).
   String? loginNotice;
 
+  /// The PDPA "Accept and continue" request is in flight.
+  bool consentBusy = false;
+
   Timer? _healthTimer;
   Timer? _idleTimer;
   Timer? _warnTimer;
@@ -182,7 +185,10 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<void> acceptConsent() async {
+    if (consentBusy) return;
+    setState(() => consentBusy = true);
     final result = await guard(context, () => api.postJson('/auth/pdpa-consent', {}));
+    if (mounted) setState(() => consentBusy = false);
     if (result == null) return;
     api.token = '${result['token']}';
     if (result['csrfToken'] != null) api.csrfToken = '${result['csrfToken']}';
@@ -408,10 +414,11 @@ class _AppShellState extends State<AppShell> {
         return LoginPage(onLogin: login, health: health, initialError: loginNotice);
       case _Stage.consent:
         return PdpaConsentPage(
-          name: '${me?['displayName'] ?? ''}',
+          displayName: '${me?['displayName'] ?? ''}',
+          busy: consentBusy,
           waitingForPassword: me?['pdpaConsentAccepted'] == true,
           onAccept: acceptConsent,
-          onDecline: logout,
+          onLogout: logout,
         );
       case _Stage.sectionPick:
         return SectionPickerPage(

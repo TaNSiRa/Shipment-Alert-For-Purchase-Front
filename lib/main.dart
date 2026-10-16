@@ -21,7 +21,11 @@ part 'layout/navigation.dart';
 part 'layout/topbar.dart';
 part 'layout/scroll_behavior.dart';
 part 'pages/login_page.dart';
+part 'pages/login_halcyon.dart';
+part 'pages/login_water.dart';
 part 'pages/account_gates.dart';
+part 'pages/pdpa_consent_page.dart';
+part 'pages/pdpa_policy_text.dart';
 part 'pages/dashboard_page.dart';
 part 'pages/po_table_page.dart';
 part 'pages/po_detail_dialog.dart';
@@ -57,6 +61,8 @@ void main() {
   };
   // Open in whichever theme (liquid glass / flat) was left on.
   Lg.restore();
+  // And the login scene on the water that was left on (RAP's Halcyon login).
+  HcWater.restore();
   LiquidField.ensure();
   runApp(const PurchaseShipmentAlertApp());
 }
