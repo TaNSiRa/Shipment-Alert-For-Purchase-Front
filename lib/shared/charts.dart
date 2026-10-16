@@ -23,9 +23,13 @@ class BarSegment {
 /// One bar in every group, e.g. "POs issued". Its height is the sum of its
 /// segments.
 class BarSeries {
-  const BarSeries(this.name, this.segments);
+  const BarSeries(this.name, this.segments, {this.notes = const []});
   final String name;
   final List<BarSegment> segments;
+
+  /// Extra tooltip lines (label, one value per group) that are not drawn,
+  /// e.g. "Still waiting" under a target bar.
+  final List<(String, List<int>)> notes;
 
   int total(int i) => segments.fold<int>(0, (a, s) => a + s.values[i]);
 }
@@ -217,6 +221,7 @@ class _ExtrudedBarChartState extends State<ExtrudedBarChart> {
     final rows = [
       for (final seg in s.segments) row(seg.label, '${seg.values[h.group]}', dot: seg.color),
       if (s.segments.length > 1) row('Total', '$total', bold: true),
+      for (final n in s.notes) row(n.$1, '${n.$2[h.group]}'),
     ];
     // Just above the bar's TOP FACE (which stands `rise` above its front),
     // clamped inside the chart.

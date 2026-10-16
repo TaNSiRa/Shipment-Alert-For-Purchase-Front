@@ -380,13 +380,13 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _trend(List<Map> trend) {
     return DsCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const DsCardTitle('Last 6 months — issued vs arrived',
+        const DsCardTitle('Last 6 months — planned vs arrived',
             icon: Icons.bar_chart),
         const SizedBox(height: 12),
-        // Per month: POs issued (left) and POs that reached the factory
-        // (right), the arrivals split into on time / late against the planned
-        // date of the arrival step. On time is a part of Arrived, so they are
-        // one stacked bar rather than two bars side by side.
+        // Per month, one set of POs: those PLANNED to reach the factory that
+        // month (left, the target from the PO date) and how many of them have
+        // arrived (right), on time or late. The empty height between the two
+        // is what has not arrived yet.
         ExtrudedBarChart(
           labels: [
             for (final t in trend)
@@ -399,18 +399,40 @@ class _DashboardPageState extends State<DashboardPage> {
           ],
           currentIndex: trend.isEmpty ? null : trend.length - 1,
           series: [
-            BarSeries('POs issued', [
-              BarSegment('POs issued', DsColors.navy,
-                  [for (final t in trend) intFrom(t['issued']) ?? 0]),
+            BarSeries('Planned', [
+              BarSegment('Planned to arrive', DsColors.navy,
+                  [for (final t in trend) intFrom(t['planned']) ?? 0]),
+            ], notes: [
+              (
+                'Arrived',
+                [
+                  for (final t in trend)
+                    (intFrom(t['plannedOnTime']) ?? 0) +
+                        (intFrom(t['plannedLate']) ?? 0)
+                ]
+              ),
+              (
+                'Still waiting',
+                [
+                  for (final t in trend)
+                    max(
+                        0,
+                        (intFrom(t['planned']) ?? 0) -
+                            (intFrom(t['plannedOnTime']) ?? 0) -
+                            (intFrom(t['plannedLate']) ?? 0))
+                ]
+              ),
             ]),
             BarSeries('Arrived', [
               BarSegment('Arrived on time', DsColors.greenDot,
-                  [for (final t in trend) intFrom(t['onTime']) ?? 0]),
-              BarSegment('Arrived late', const Color(0xffe08a80), [
-                for (final t in trend)
-                  max(0,
-                      (intFrom(t['arrived']) ?? 0) - (intFrom(t['onTime']) ?? 0))
-              ]),
+                  [for (final t in trend) intFrom(t['plannedOnTime']) ?? 0]),
+              BarSegment('Arrived late', const Color(0xffe08a80),
+                  [for (final t in trend) intFrom(t['plannedLate']) ?? 0]),
+            ], notes: [
+              (
+                'Planned',
+                [for (final t in trend) intFrom(t['planned']) ?? 0]
+              ),
             ]),
           ],
         ),
