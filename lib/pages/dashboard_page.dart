@@ -162,16 +162,27 @@ class _DashboardPageState extends State<DashboardPage> {
               color: Color(0x3311152b), blurRadius: 24, offset: Offset(0, 10))
         ],
       ),
-      child: Container(
+      // Violet glows spread across the navy and a scatter of small purple
+      // dots (the login page's sky), so the card reads as RAP's deep violet
+      // rather than near-black. Painted behind the content, clipped to the card.
+      child: ClipRRect(
+        borderRadius: radius,
+        child: Stack(children: [
+          for (final g in _heroGlows)
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: g.$1,
+                    radius: g.$2,
+                    colors: [g.$3, g.$3.withValues(alpha: 0)],
+                  ),
+                ),
+              ),
+            ),
+          const Positioned.fill(child: CustomPaint(painter: _HeroDotsPainter())),
+          Padding(
         padding: const EdgeInsets.fromLTRB(26, 22, 26, 22),
-        decoration: BoxDecoration(
-          borderRadius: radius,
-          gradient: const RadialGradient(
-            center: Alignment(.75, -1.1),
-            radius: .9,
-            colors: [Color(0x996a64e0), Color(0x00494aa8)],
-          ),
-        ),
         child: Row(children: [
           Expanded(
             child:
@@ -229,9 +240,21 @@ class _DashboardPageState extends State<DashboardPage> {
             label: const Text('All shipments'),
           ),
         ]),
+          ),
+        ]),
       ),
     );
   }
+
+  // (centre, radius as a fraction of the card's height, colour)
+  static const _heroGlows = <(Alignment, double, Color)>[
+    (Alignment(.75, -1.1), 1.6, Color(0xa06a64e0)),
+    (Alignment(-.95, 1.35), 1.5, Color(0x907c3aed)),
+    (Alignment(-.25, -1.25), 1.1, Color(0x705b5bd6)),
+    (Alignment(.2, 1.45), 1.2, Color(0x80a855f7)),
+    (Alignment(1.05, .95), 1.3, Color(0x809333ea)),
+    (Alignment(-.55, .1), .9, Color(0x406d28d9)),
+  ];
 
   Widget _pipeline(AppScope scope, List<Map>? steps) {
     final total = (steps ?? const [])
@@ -878,4 +901,35 @@ class _RenderEqualHeightRow extends RenderBox
   @override
   bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
       defaultHitTestChildren(result, position: position);
+}
+
+/// The hero card's small purple dots: fixed positions (a seeded scatter, the
+/// same on every paint), sized and lit a little differently from one another.
+class _HeroDotsPainter extends CustomPainter {
+  const _HeroDotsPainter();
+
+  static final List<(double, double, double, double)> _dots = () {
+    final r = Random(7);
+    return [
+      for (var i = 0; i < 46; i++)
+        (r.nextDouble(), r.nextDouble(), 1.0 + r.nextDouble() * 2.2, .25 + r.nextDouble() * .5),
+    ];
+  }();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final d in _dots) {
+      final c = Offset(d.$1 * size.width, d.$2 * size.height);
+      canvas.drawCircle(
+          c,
+          d.$3 * 2.6,
+          Paint()
+            ..color = const Color(0xffa78bfa).withValues(alpha: d.$4 * .35)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
+      canvas.drawCircle(c, d.$3, Paint()..color = const Color(0xffc4b5fd).withValues(alpha: d.$4));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _HeroDotsPainter oldDelegate) => false;
 }

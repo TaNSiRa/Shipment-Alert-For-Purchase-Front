@@ -2,7 +2,7 @@ part of '../main.dart';
 
 /// The Profile page, laid out as RAP's: the employee ID badge (or the classic
 /// information card) on the left, and a tabbed column on the right — Profile,
-/// Reminders, Security, Appearance.
+/// Reminders, Security.
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
   @override
@@ -35,7 +35,7 @@ class _ProfilePageState extends State<ProfilePage> {
   final GlobalKey _rightColumnKey = GlobalKey();
   double? _rightColumnHeight;
 
-  // Which card is on screen: profile, reminders, security, appearance.
+  // Which card is on screen: profile, reminders, security.
   int tab = 0;
   // Profile tab: read-only contact sheet until Edit is pressed.
   bool editing = false;
@@ -213,7 +213,6 @@ class _ProfilePageState extends State<ProfilePage> {
                 switch (tab) {
                   1 => _remindersCard(),
                   2 => _securityTab(),
-                  3 => const _AppearanceCard(),
                   _ => _editProfileCard(),
                 },
               ],
@@ -502,12 +501,11 @@ class _ProfilePageState extends State<ProfilePage> {
 
   // The sliding segmented control: the selection travels between tabs.
   Widget _tabBar() {
-    const labels = ['Profile', 'Reminders', 'Security', 'Appearance'];
+    const labels = ['Profile', 'Reminders', 'Security'];
     const icons = [
       Icons.person_outline,
       Icons.notifications_none,
       Icons.lock_outline,
-      Icons.palette_outlined,
     ];
     return DsCard(
       child: Align(
@@ -665,11 +663,23 @@ class _ProfilePageState extends State<ProfilePage> {
     return Panel(
       title: 'Recent account activity',
       icon: Icons.shield_outlined,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        if (activity.isEmpty) const Text('-', style: DsType.meta),
-        for (final a in activity.take(12))
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 5),
+      child: activity.isEmpty
+          ? const Text('-', style: DsType.meta)
+          : _FitToScreen(
+              rowHeight: _activityRowH,
+              count: activity.length,
+              builder: (n) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                for (final a in activity.take(n)) _activityRow(a),
+              ]),
+            ),
+    );
+  }
+
+  static const _activityRowH = 30.0;
+
+  Widget _activityRow(Map<String, dynamic> a) {
+    return SizedBox(
+            height: _activityRowH,
             child: Row(children: [
               Icon(
                 _isWarning('${a['action']}') ? Icons.gpp_maybe_outlined : Icons.check_circle_outline,
@@ -681,9 +691,7 @@ class _ProfilePageState extends State<ProfilePage> {
               Expanded(flex: 3, child: Text(fmtDateTime(a['at']), style: DsType.metaSm)),
               Expanded(flex: 2, child: Text('${a['ip'] ?? ''}', style: DsType.metaSm)),
             ]),
-          ),
-      ]),
-    );
+          );
   }
 
   bool _isWarning(String a) => a == 'LOGIN_FAILED' || a == 'LOGIN_BLOCKED' || a == 'ACCOUNT_LOCKED';
@@ -1380,67 +1388,6 @@ class _AvatarCropPainter extends CustomPainter {
       old.image != image || old.scale != scale || old.offset != offset;
 }
 
-/// Per-machine look: the badge card and the liquid-glass theme. Kept in this
-/// browser, so there is nothing to save — each switch applies at once.
-class _AppearanceCard extends StatelessWidget {
-  const _AppearanceCard();
-
-  @override
-  Widget build(BuildContext context) {
-    return Panel(
-      title: 'Appearance',
-      icon: Icons.palette_outlined,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Padding(
-          padding: EdgeInsets.only(bottom: 6),
-          child: Text(
-            'Kept on this computer, not on your account — a shared PC keeps one set of answers, '
-            'and your own laptop keeps its own.',
-            style: TextStyle(fontSize: 12, color: DsColors.muted, height: 1.5),
-          ),
-        ),
-        _PrefSwitch(
-          pref: ProfileCardStyle.idBadge,
-          icon: Icons.badge_outlined,
-          title: 'Employee badge card',
-          subtitle: 'Your profile as the printed ID card on a lanyard — click it to see the back. '
-              'Off shows the plain information card',
-        ),
-        _PrefSwitch(
-          pref: Lg.enabled,
-          icon: Icons.blur_on,
-          title: 'Liquid glass',
-          subtitle: 'The refracting panes. Turn it off on an older PC — the flat theme is lighter to draw',
-        ),
-      ]),
-    );
-  }
-}
-
-/// One switch bound straight to a ValueNotifier — no local state, no Save.
-class _PrefSwitch extends StatelessWidget {
-  const _PrefSwitch({required this.pref, required this.icon, required this.title, required this.subtitle});
-
-  final ValueNotifier<bool> pref;
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: pref,
-      builder: (context, on, _) => _SwitchRow(
-        on: on,
-        icon: icon,
-        title: title,
-        subtitle: subtitle,
-        onChanged: (v) => pref.value = v,
-      ),
-    );
-  }
-}
-
 /// Icon tile · title and subtitle · switch, the whole row tappable.
 class _SwitchRow extends StatelessWidget {
   const _SwitchRow({
@@ -1487,6 +1434,46 @@ class _SwitchRow extends StatelessWidget {
           Switch(value: on, onChanged: onChanged, activeThumbColor: DsColors.navy),
         ]),
       ),
+    );
+  }
+}
+
+/// Shows only as many fixed-height rows as fit between where it sits and the
+/// bottom of the window, so the list never makes the page scroll. Re-measures
+/// when the window is resized.
+class _FitToScreen extends StatefulWidget {
+  const _FitToScreen({required this.rowHeight, required this.count, required this.builder});
+  final double rowHeight;
+  final int count;
+  final Widget Function(int rows) builder;
+
+  @override
+  State<_FitToScreen> createState() => _FitToScreenState();
+}
+
+class _FitToScreenState extends State<_FitToScreen> {
+  // What is left below the list: the card's own bottom padding and the page's.
+  static const _below = 60.0;
+  int? _rows;
+
+  void _measure() {
+    if (!mounted) return;
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final top = box.localToGlobal(Offset.zero).dy;
+    final height = MediaQuery.of(context).size.height;
+    final rows = max(1, ((height - top - _below) / widget.rowHeight).floor());
+    if (rows != _rows) setState(() => _rows = rows);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    MediaQuery.sizeOf(context); // rebuild (and so re-measure) on resize
+    WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
+    final rows = min(widget.count, _rows ?? 0);
+    return SizedBox(
+      width: double.infinity,
+      child: widget.builder(rows),
     );
   }
 }
