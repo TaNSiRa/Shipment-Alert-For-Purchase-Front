@@ -2998,7 +2998,13 @@ class DsPrimaryButton extends StatelessWidget {
       child: FilledButton.icon(
         onPressed: onPressed,
         icon: icon == null ? null : Icon(icon, size: 19),
-        label: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+        // One line always: when the button is narrower than its label (a
+        // tile column, "Everyone (4)"), the label shrinks a touch instead of
+        // wrapping onto a second line.
+        label: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(label, maxLines: 1, softWrap: false, style: const TextStyle(fontWeight: FontWeight.w600)),
+        ),
         style: FilledButton.styleFrom(
           backgroundColor: DsColors.navy,
           foregroundColor: Colors.white,
@@ -3035,7 +3041,13 @@ class DsOutlineButton extends StatelessWidget {
       child: OutlinedButton.icon(
         onPressed: onPressed,
         icon: icon == null ? null : Icon(icon, size: 18),
-        label: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+        // One line always: when the button is narrower than its label (a
+        // tile column, "Everyone (4)"), the label shrinks a touch instead of
+        // wrapping onto a second line.
+        label: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(label, maxLines: 1, softWrap: false, style: const TextStyle(fontWeight: FontWeight.w600)),
+        ),
         style: OutlinedButton.styleFrom(
           foregroundColor: foreground,
           backgroundColor: DsColors.glass,
