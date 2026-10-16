@@ -180,7 +180,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
               ),
             ),
-          const Positioned.fill(child: CustomPaint(painter: _HeroDotsPainter())),
+          const Positioned.fill(child: _HeroDots()),
           Padding(
         padding: const EdgeInsets.fromLTRB(26, 22, 26, 22),
         child: Row(children: [
@@ -903,33 +903,92 @@ class _RenderEqualHeightRow extends RenderBox
       defaultHitTestChildren(result, position: position);
 }
 
-/// The hero card's small purple dots: fixed positions (a seeded scatter, the
-/// same on every paint), sized and lit a little differently from one another.
-class _HeroDotsPainter extends CustomPainter {
-  const _HeroDotsPainter();
+/// The hero card's small purple dots, drifting. Each dot wanders slowly
+/// around its home position on its own small loop and twinkles on its own
+/// beat, so the field never moves in step. One controller, one repaint of a
+/// layer of its own (RepaintBoundary) — the card's text is never redrawn for
+/// it. Still when the system asks for reduced motion.
+class _HeroDots extends StatefulWidget {
+  const _HeroDots();
 
-  static final List<(double, double, double, double)> _dots = () {
+  @override
+  State<_HeroDots> createState() => _HeroDotsState();
+}
+
+class _HeroDotsState extends State<_HeroDots> with SingleTickerProviderStateMixin {
+  // One full loop; every dot's speed is a whole multiple of it, so the end of
+  // the loop lands exactly where it began and the repeat has no visible jump.
+  late final AnimationController _clock =
+      AnimationController(vsync: this, duration: const Duration(seconds: 60));
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (still) {
+      _clock.stop();
+    } else if (!_clock.isAnimating) {
+      _clock.repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _clock.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: CustomPaint(painter: _HeroDotsPainter(_clock)),
+    );
+  }
+}
+
+class _HeroDotsPainter extends CustomPainter {
+  _HeroDotsPainter(this.clock) : super(repaint: clock);
+  final Animation<double> clock;
+
+  // x, y (0..1 of the card), radius, brightness, then the motion: loop size
+  // in px, loops per minute on x and on y, phase, twinkle speed.
+  static final List<List<double>> _dots = () {
     final r = Random(7);
     return [
       for (var i = 0; i < 46; i++)
-        (r.nextDouble(), r.nextDouble(), 1.0 + r.nextDouble() * 2.2, .25 + r.nextDouble() * .5),
+        [
+          r.nextDouble(),
+          r.nextDouble(),
+          1.0 + r.nextDouble() * 2.2,
+          .25 + r.nextDouble() * .5,
+          6 + r.nextDouble() * 14,
+          (1 + r.nextInt(3)).toDouble(),
+          (1 + r.nextInt(3)).toDouble(),
+          r.nextDouble() * 2 * pi,
+          (2 + r.nextInt(5)).toDouble(),
+        ],
     ];
   }();
 
   @override
   void paint(Canvas canvas, Size size) {
+    final t = clock.value * 2 * pi;
+    final glow = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+    final core = Paint();
     for (final d in _dots) {
-      final c = Offset(d.$1 * size.width, d.$2 * size.height);
-      canvas.drawCircle(
-          c,
-          d.$3 * 2.6,
-          Paint()
-            ..color = const Color(0xffa78bfa).withValues(alpha: d.$4 * .35)
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
-      canvas.drawCircle(c, d.$3, Paint()..color = const Color(0xffc4b5fd).withValues(alpha: d.$4));
+      final c = Offset(
+        d[0] * size.width + d[4] * sin(t * d[5] + d[7]),
+        d[1] * size.height + d[4] * .6 * cos(t * d[6] + d[7]),
+      );
+      // Twinkle between 45 % and 100 % of the dot's own brightness.
+      final a = d[3] * (.725 + .275 * sin(t * d[8] + d[7] * 2));
+      glow.color = const Color(0xffa78bfa).withValues(alpha: a * .35);
+      core.color = const Color(0xffc4b5fd).withValues(alpha: a);
+      canvas.drawCircle(c, d[2] * 2.6, glow);
+      canvas.drawCircle(c, d[2], core);
     }
   }
 
   @override
-  bool shouldRepaint(covariant _HeroDotsPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _HeroDotsPainter oldDelegate) => oldDelegate.clock != clock;
 }
