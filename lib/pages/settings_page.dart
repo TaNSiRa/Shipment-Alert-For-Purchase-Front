@@ -231,22 +231,34 @@ class _MailSettingsState extends State<_MailSettings> with _SettingsData {
   String get _time =>
       '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
 
+  /// The month the monthly report is about (preview and send).
+  String month = todayIso().substring(0, 7);
+
+  String _monthLabel(String key) =>
+      intl.DateFormat('MMMM yyyy').format(DateTime.parse('$key-01'));
+
+  String _kindLabel(String kind) =>
+      kind == 'daily' ? "today's daily report" : 'the ${_monthLabel(month)} report';
+
   Future<void> _sendNow(String kind, bool toSelf) async {
     final api = AppScope.read(context).api;
+    final count = (status?['recipients'] as List?)?.length ?? 0;
     if (!toSelf &&
         !await confirmAction(context,
-            title:
-                'Send the ${kind == 'daily' ? 'daily report' : 'monthly report'} to everyone now?',
-            message:
-                'It goes to the ${status?['recipients']?.length ?? 0} recipient(s) listed below.',
-            confirmLabel: 'Send')) {
+            title: 'Send ${_kindLabel(kind)} to everyone now?',
+            message: 'It goes to the $count recipient(s) of this section.',
+            icon: Icons.campaign_outlined,
+            confirmLabel: 'Send to $count')) {
       return;
     }
     if (!mounted) return;
     final r = await guard(
         context,
-        () => api.postJson(
-            '/settings/mail/send-now', {'kind': kind, 'toSelf': toSelf}));
+        () => api.postJson('/settings/mail/send-now', {
+              'kind': kind,
+              'toSelf': toSelf,
+              if (kind == 'monthly') 'month': month,
+            }));
     if (r == null || !mounted) return;
     final s = '${r['status']}';
     if (s == 'sent') {
@@ -264,14 +276,39 @@ class _MailSettingsState extends State<_MailSettings> with _SettingsData {
     unawaited(_status());
   }
 
-  Future<void> _preview(String kind) async {
+  Future<void> _sendTest() async {
+    final r = await guard(context,
+        () => AppScope.read(context).api.postJson('/settings/mail/test', {}));
+    if (r == null || !mounted) return;
+    if (r['status'] == 'sent') {
+      AppToast.success(context, 'Test email sent to ${r['to']}');
+    } else if (r['status'] == 'pending_config') {
+      AppToast.info(context,
+          'Recorded in the mail log, but SMTP is not configured on the server (backend/.env)');
+    } else {
+      AppToast.error(context, 'Not sent: ${r['status']} — see the Mail log');
+    }
+  }
+
+  /// Opens the email as it will arrive, or (pdf) in the print dialog where
+  /// "Save as PDF" saves it. The tab is opened inside the click so popup
+  /// blockers leave it alone, then filled once the server has built the mail.
+  Future<void> _preview(String kind, {bool pdf = false}) async {
+    final tab = PendingTab.open();
+    if (!tab.isOpen) {
+      AppToast.error(context, 'The browser blocked the new tab — allow pop-ups for this site');
+      return;
+    }
     final api = AppScope.read(context).api;
     final r = await guard(
-        context, () => api.getJson('/settings/mail/preview?kind=$kind'));
-    if (r == null) return;
-    final blob = html.Blob(['${r['html']}'], 'text/html');
-    final url = html.Url.createObjectUrlFromBlob(blob);
-    html.window.open(url, '_blank');
+        context,
+        () => api.getJson(
+            '/settings/mail/preview?kind=$kind${kind == 'monthly' ? '&month=$month' : ''}'));
+    if (r == null) {
+      tab.close();
+      return;
+    }
+    tab.show('${r['html']}', title: '${r['subject'] ?? 'Email preview'}', print: pdf);
   }
 
   @override
@@ -467,74 +504,243 @@ class _MailSettingsState extends State<_MailSettings> with _SettingsData {
       const SizedBox(height: 16),
       DsCard(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const DsCardTitle('Try it', icon: Icons.science_outlined),
-          const SizedBox(height: 10),
-          Wrap(spacing: 10, runSpacing: 10, children: [
-            DsOutlineButton(
-                label: 'Preview daily email',
-                icon: Icons.visibility_outlined,
-                height: 38,
-                onPressed: () => _preview('daily')),
-            DsOutlineButton(
-                label: 'Preview monthly email',
-                icon: Icons.visibility_outlined,
-                height: 38,
-                onPressed: () => _preview('monthly')),
-            DsOutlineButton(
-              label: 'Send a test email to me',
-              icon: Icons.send_outlined,
-              height: 38,
-              onPressed: () async {
-                final r = await guard(
-                    context,
-                    () => AppScope.read(context)
-                        .api
-                        .postJson('/settings/mail/test', {}));
-                if (r != null && context.mounted) {
-                  AppToast.info(
-                      context,
-                      r['status'] == 'sent'
-                          ? 'Test email sent to ${r['to']}'
-                          : 'Not sent: ${r['status']}');
-                }
-              },
-            ),
-            DsOutlineButton(
-                label: 'Send today\'s report to me',
-                icon: Icons.forward_to_inbox,
-                height: 38,
-                onPressed: () => _sendNow('daily', true)),
-            DsPrimaryButton(
-                label: 'Send today\'s report to everyone',
-                icon: Icons.campaign_outlined,
-                height: 38,
-                onPressed: () => _sendNow('daily', false)),
-          ]),
-          if (runs.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            const DsSectionLabel('Recent automatic runs'),
-            const SizedBox(height: 6),
-            for (final r in runs)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Row(children: [
-                  SizedBox(
-                      width: 90,
-                      child: Text('${r['runType']}',
-                          style: mono(size: 11.5, weight: FontWeight.w700))),
-                  SizedBox(
-                      width: 110,
-                      child: Text(fmtDate(r['runDate']), style: DsType.meta)),
-                  SizedBox(width: 120, child: DsTag('${r['status']}')),
-                  Expanded(
-                      child:
-                          Text('${r['detail'] ?? ''}', style: DsType.metaSm)),
-                ]),
+          const DsCardTitle('Preview & send', icon: Icons.outgoing_mail),
+          const SizedBox(height: 4),
+          const Text(
+              'See an email exactly as it will arrive, or send one now — to yourself first, then to everyone.',
+              style: DsType.meta),
+          const SizedBox(height: 14),
+          LayoutBuilder(builder: (context, box) {
+            final tiles = [
+              _MailTile(
+                icon: Icons.today_outlined,
+                color: DsColors.navy,
+                title: 'Daily report',
+                subtitle: 'Overdue, due today and arriving this week · working days at $_time',
+                onPreview: () => _preview('daily'),
+                onPdf: () => _preview('daily', pdf: true),
+                onSendMe: () => _sendNow('daily', true),
+                onSendAll: () => _sendNow('daily', false),
+                everyone: recipients.length,
               ),
-          ],
+              _MailTile(
+                icon: Icons.calendar_month_outlined,
+                color: DsColors.purpleFg,
+                title: 'Monthly report',
+                subtitle: 'Month-end summary · last working day of the month',
+                extra: SizedBox(
+                  height: 36,
+                  child: SearchableDropdownField<String>(
+                    value: month,
+                    dense: true,
+                    dialogTitle: 'Report month',
+                    decoration: dsInput(icon: Icons.event_outlined).copyWith(
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9)),
+                    items: [
+                      for (var i = 0; i < 12; i++)
+                        () {
+                          final now = DateTime.now();
+                          final d = DateTime(now.year, now.month - i);
+                          final key = '${d.year}-${d.month.toString().padLeft(2, '0')}';
+                          return SearchableDropdownItem<String>(
+                              value: key, label: _monthLabel(key), subtitle: i == 0 ? 'This month' : null);
+                        }(),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) setState(() => month = v);
+                    },
+                  ),
+                ),
+                onPreview: () => _preview('monthly'),
+                onPdf: () => _preview('monthly', pdf: true),
+                onSendMe: () => _sendNow('monthly', true),
+                onSendAll: () => _sendNow('monthly', false),
+                everyone: recipients.length,
+              ),
+              _MailTile(
+                icon: Icons.science_outlined,
+                color: DsColors.tealFg,
+                title: 'Test email',
+                subtitle: 'A short message that checks the mail server settings — no report in it',
+                status: configured
+                    ? const DsTag('SMTP configured', color: DsColors.greenFg, bg: DsColors.greenBg)
+                    : const DsTag('SMTP not configured', color: DsColors.amberFg, bg: DsColors.amberBg),
+                onSendMe: _sendTest,
+              ),
+            ];
+            if (box.maxWidth < 900) {
+              return Column(children: [
+                for (final t in tiles) ...[t, const SizedBox(height: 12)],
+              ]);
+            }
+            return IntrinsicHeight(
+              child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                for (var i = 0; i < tiles.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 12),
+                  Expanded(child: tiles[i]),
+                ],
+              ]),
+            );
+          }),
+          const SizedBox(height: 18),
+          const DsSectionLabel('Recent automatic runs'),
+          const SizedBox(height: 8),
+          if (runs.isEmpty)
+            const Text('None yet — the first one goes out at the next scheduled time.',
+                style: DsType.meta)
+          else
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: DsColors.lineSoft),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(children: [
+                Container(
+                  color: DsColors.subtle,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  child: const Row(children: [
+                    SizedBox(width: 100, child: Text('REPORT', style: DsType.eyebrow)),
+                    SizedBox(width: 130, child: Text('DATE', style: DsType.eyebrow)),
+                    SizedBox(width: 150, child: Text('STATUS', style: DsType.eyebrow)),
+                    Expanded(child: Text('DETAIL', style: DsType.eyebrow)),
+                  ]),
+                ),
+                for (final r in runs)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                    decoration: const BoxDecoration(
+                        border: Border(top: BorderSide(color: DsColors.lineSoft))),
+                    child: Row(children: [
+                      SizedBox(
+                          width: 100,
+                          child: Text('${r['runType']}'.toLowerCase() == 'monthly' ? 'Monthly' : 'Daily',
+                              style: DsType.rowTitle)),
+                      SizedBox(width: 130, child: Text(fmtDate(r['runDate']), style: DsType.meta)),
+                      SizedBox(
+                          width: 150,
+                          child: Align(alignment: Alignment.centerLeft, child: _runStatus('${r['status']}'))),
+                      Expanded(
+                          child: Text('${r['detail'] ?? ''}',
+                              maxLines: 1, overflow: TextOverflow.ellipsis, style: DsType.metaSm)),
+                    ]),
+                  ),
+              ]),
+            ),
         ]),
       ),
     ]);
+  }
+
+  Widget _runStatus(String s) => switch (s) {
+        'sent' => const DsTag('Sent', color: DsColors.greenFg, bg: DsColors.greenBg),
+        'pending_config' => const DsTag('SMTP not set', color: DsColors.amberFg, bg: DsColors.amberBg),
+        'disabled' => const DsTag('Email off'),
+        'skipped' || 'no_recipients' => DsTag(s == 'skipped' ? 'Skipped' : 'No recipients'),
+        _ => DsTag(s, color: DsColors.redFg, bg: DsColors.redBg),
+      };
+}
+
+/// One email in the Preview & send card: what it is, how to look at it
+/// (in a tab, or as a PDF), and who to send it to.
+class _MailTile extends StatelessWidget {
+  const _MailTile({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    this.extra,
+    this.status,
+    this.onPreview,
+    this.onPdf,
+    required this.onSendMe,
+    this.onSendAll,
+    this.everyone = 0,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final Widget? extra;
+  final Widget? status;
+  final VoidCallback? onPreview;
+  final VoidCallback? onPdf;
+  final VoidCallback onSendMe;
+  final VoidCallback? onSendAll;
+  final int everyone;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget label(String t) => Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: DsSectionLabel(t),
+        );
+    Widget pair(Widget a, Widget b) => Row(children: [
+          Expanded(child: a),
+          const SizedBox(width: 8),
+          Expanded(child: b),
+        ]);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .55),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: DsColors.cardBorder),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+                color: color.withValues(alpha: .12), borderRadius: BorderRadius.circular(10)),
+            child: Icon(icon, size: 18, color: color),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: DsType.cardTitle),
+              const SizedBox(height: 2),
+              Text(subtitle, style: DsType.metaSm),
+            ]),
+          ),
+        ]),
+        if (extra != null) ...[const SizedBox(height: 12), extra!],
+        if (status != null) ...[const SizedBox(height: 12), status!],
+        const Spacer(),
+        const SizedBox(height: 14),
+        if (onPreview != null) ...[
+          label('Preview'),
+          pair(
+            DsOutlineButton(
+                label: 'Open', icon: Icons.visibility_outlined, height: 36, onPressed: onPreview),
+            DsOutlineButton(
+                label: 'PDF', icon: Icons.picture_as_pdf_outlined, height: 36, onPressed: onPdf),
+          ),
+          const SizedBox(height: 12),
+        ],
+        label('Send'),
+        if (onSendAll == null)
+          Row(children: [
+            Expanded(
+              child: DsOutlineButton(
+                  label: 'Send a test to me', icon: Icons.send_outlined, height: 36, onPressed: onSendMe),
+            ),
+          ])
+        else
+          pair(
+            DsOutlineButton(
+                label: 'To me', icon: Icons.person_outline, height: 36, onPressed: onSendMe),
+            DsPrimaryButton(
+                label: everyone > 0 ? 'Everyone ($everyone)' : 'Everyone',
+                icon: Icons.groups_outlined,
+                height: 36,
+                onPressed: onSendAll),
+          ),
+      ]),
+    );
   }
 }
 

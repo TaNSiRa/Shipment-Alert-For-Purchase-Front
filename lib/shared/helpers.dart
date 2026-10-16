@@ -711,3 +711,62 @@ class MinWidthScroll extends StatelessWidget {
     });
   }
 }
+
+/// A browser tab opened straight away — inside the click, so no popup blocker
+/// stops it — and filled in once the content has arrived from the server.
+class PendingTab {
+  PendingTab._(this._window);
+  final JSObject? _window;
+
+  static PendingTab open() {
+    JSObject? w;
+    try {
+      w = globalContext.callMethod<JSObject?>('open'.toJS, ''.toJS, '_blank'.toJS);
+    } catch (_) {}
+    return PendingTab._(w);
+  }
+
+  /// False when the browser refused to open it (popups blocked).
+  bool get isOpen => _window != null;
+
+  void close() {
+    try {
+      _window?.callMethod<JSAny?>('close'.toJS);
+    } catch (_) {}
+  }
+
+  /// Writes [document] into the tab. With [print] the browser's print dialog
+  /// opens on it, where "Save as PDF" makes the PDF.
+  void show(String document, {String? title, bool print = false}) {
+    final w = _window;
+    if (w == null) return;
+    var page = document;
+    if (print) {
+      // Keep the email's colours on paper, and give it an A4 margin.
+      const css = '<style>@page{size:A4;margin:12mm}'
+          'html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}</style>';
+      page = page.contains('</head>') ? page.replaceFirst('</head>', '$css</head>') : '$css$page';
+    }
+    if (title != null) {
+      final safe = const HtmlEscape().convert(title);
+      page = page.contains('<title>')
+          ? page.replaceFirst(RegExp(r'<title>[^<]*</title>'), '<title>$safe</title>')
+          : '<title>$safe</title>$page';
+    }
+    try {
+      final doc = w.getProperty<JSObject>('document'.toJS);
+      doc.callMethod<JSAny?>('open'.toJS);
+      doc.callMethod<JSAny?>('write'.toJS, page.toJS);
+      doc.callMethod<JSAny?>('close'.toJS);
+      if (print) {
+        // A beat for the layout to settle before the print preview is taken.
+        Timer(const Duration(milliseconds: 400), () {
+          try {
+            w.callMethod<JSAny?>('focus'.toJS);
+            w.callMethod<JSAny?>('print'.toJS);
+          } catch (_) {}
+        });
+      }
+    } catch (_) {}
+  }
+}
