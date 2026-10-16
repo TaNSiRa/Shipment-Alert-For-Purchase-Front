@@ -139,12 +139,11 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
   }
 
   /// Lead time the PO will get and where it comes from: the longest material
-  /// lead time on the lines, else the supplier's default.
+  /// lead time on the lines.
   (int, String)? get _lead {
     final days = lines.map((l) => l.leadTime).whereType<int>().toList();
-    if (days.isNotEmpty) return (days.reduce(max), 'longest material lead time');
-    final d = intFrom(_supplier?['defaultLeadTimeDays']);
-    return d == null ? null : (d, 'supplier default');
+    if (days.isEmpty) return null;
+    return (days.reduce(max), 'longest material lead time');
   }
 
   double? get _total {
@@ -354,8 +353,6 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
         ? null
         : [
             '${s['supplierCode']}',
-            if (s['defaultLeadTimeDays'] != null)
-              'lead time ${s['defaultLeadTimeDays']} days',
             if (!loadingMaterials) plural(materials.length, 'material'),
           ].join(' · ');
 
@@ -395,8 +392,7 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
               value: intFrom(s['id']),
               label: '${s['name']}',
               subtitle:
-                  '${s['supplierCode']}${s['shortName'] == null ? '' : ' · ${s['shortName']}'}'
-                  '${s['defaultLeadTimeDays'] == null ? '' : ' · ${s['defaultLeadTimeDays']} days'}',
+                  '${s['supplierCode']}${s['shortName'] == null ? '' : ' · ${s['shortName']}'}',
             ),
         ],
         onChanged: (v) {

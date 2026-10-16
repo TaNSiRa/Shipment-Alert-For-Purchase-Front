@@ -221,10 +221,6 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
     final name = TextEditingController(text: '${s?['name'] ?? ''}');
     final short = TextEditingController(text: '${s?['shortName'] ?? ''}');
     final country = TextEditingController(text: '${s?['country'] ?? ''}');
-    final lead = TextEditingController(
-        text: s?['defaultLeadTimeDays'] == null
-            ? ''
-            : '${s!['defaultLeadTimeDays']}');
     final email = TextEditingController(text: '${s?['contactEmail'] ?? ''}');
     final remark = TextEditingController(text: '${s?['remark'] ?? ''}');
     bool active = s?['isActive'] != false;
@@ -233,20 +229,14 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
       context: context,
       builder: (ctx) => StatefulBuilder(builder: (ctx, setState) {
         Future<void> save() async {
-          final lt =
-              lead.text.trim().isEmpty ? null : int.tryParse(lead.text.trim());
           if (code.text.trim().isEmpty || name.text.trim().isEmpty) {
             return setState(() => error = 'Supplier ID and name are required');
-          }
-          if (lead.text.trim().isNotEmpty && (lt == null || lt < 1 || lt > 365)) {
-            return setState(() => error = 'Lead time must be 1–365 days');
           }
           final body = {
             'supplierCode': code.text.trim(),
             'name': name.text.trim(),
             'shortName': short.text.trim(),
             'country': country.text.trim(),
-            'defaultLeadTimeDays': lt,
             'contactEmail': email.text.trim(),
             'remark': remark.text.trim(),
             'isActive': active,
@@ -299,19 +289,6 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
                       child: TextField(
                           controller: country,
                           decoration: dsInput(hint: 'Japan')))),
-              const SizedBox(width: 12),
-              SizedBox(
-                width: 150,
-                child: DsLabeledField(
-                  label: 'Default lead time',
-                  child: TextField(
-                    controller: lead,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: dsInput(hint: 'days'),
-                  ),
-                ),
-              ),
             ]),
             const SizedBox(height: 12),
             DsLabeledField(
@@ -468,7 +445,6 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
           DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 2, 210), height: 11)),
           DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 4, 84)), width: 140),
           DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 1, 54)), width: 100),
-          DsSkelCol((_) => DsSkel.line(34), width: 100),
           DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 6, 22)), width: 90),
           DsSkelCol((i) => DsSkel.line(DsSkel.vary(i + 3, 18)), width: 90),
           DsSkelCol((_) => DsSkel.tag(50), width: 90),
@@ -509,13 +485,6 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
         c(header ? 'Name' : '${s!['name']}', null, style: DsType.rowTitle),
         c(header ? 'Short name' : '${s!['shortName'] ?? '-'}', 140),
         c(header ? 'Country' : '${s!['country'] ?? '-'}', 100),
-        c(
-            header
-                ? 'Default LT'
-                : (s!['defaultLeadTimeDays'] == null
-                    ? '-'
-                    : '${s['defaultLeadTimeDays']} d'),
-            100),
         c(header ? 'Materials' : '${s!['materialCount']}', 90),
         c(header ? 'Open POs' : '${s!['activePoCount']}', 90),
         SizedBox(
