@@ -6,15 +6,15 @@ The API is in the backend repo; see its README for database setup and Microsoft 
 ## Run (development)
 ```powershell
 flutter pub get
-flutter run -d chrome --web-hostname 127.0.0.1 --web-port 5340 --dart-define=API_BASE_URL=http://127.0.0.1:4340/api
+flutter run -d chrome --web-hostname 127.0.0.1 --web-port 12126 --dart-define=API_BASE_URL=http://127.0.0.1:3401/api
 ```
-`http://127.0.0.1:5340` must be in the backend's `FRONTEND_ORIGINS`.
+`http://127.0.0.1:12126` must be in the backend's `FRONTEND_ORIGINS`.
 
 ## API address
-- `--dart-define=API_BASE_URL=http://host:4340/api`: a fixed address.
+- `--dart-define=API_BASE_URL=http://host:3401/api`: a fixed address.
 - `--dart-define=API_BASE_URL=/api`: the server the page came from (build served by the API
   itself, or behind a reverse proxy).
-- Not set: the same host as the page, port 4340.
+- Not set: the same host as the page, port 3401.
 
 ## Production build (served by the API, with CSP)
 ```powershell

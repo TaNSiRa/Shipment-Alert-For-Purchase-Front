@@ -6,7 +6,7 @@ class AppConfig {
   // so the session cookie stays same-site whichever address people use.
   static String apiBaseUrl = _resolveApiBaseUrl();
 
-  static const apiPort = 4340;
+  static const apiPort = 3401;
 
   static String _resolveApiBaseUrl() {
     const pinned = String.fromEnvironment('API_BASE_URL');
