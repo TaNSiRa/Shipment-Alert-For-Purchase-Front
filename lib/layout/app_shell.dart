@@ -39,15 +39,20 @@ class _AppShellState extends State<AppShell> {
   bool _splashDone = false;
 
   Timer? _healthTimer;
-  Timer? _idleTimer;
-  Timer? _warnTimer;
+
+  /// Checks [IdleClock.deadline] against the wall clock once a second while
+  /// signed in. Deliberately not two one-shot timers (warn at 13 min, sign
+  /// out at 15): a browser pauses timers while the PC sleeps and throttles
+  /// them in a hidden tab, so on wake both fired back to back — the warning
+  /// was pushed, the sign-out ran before that dialog had ever been built
+  /// (hidden tabs draw no frames) and the dialog then surfaced over the login
+  /// page. Comparing against the clock signs out straight away instead.
+  Timer? _idleTicker;
+  StreamSubscription<html.Event>? _visibilitySub;
+  StreamSubscription<html.Event>? _focusSub;
   Timer? _refreshDebounce;
   DateTime _lastKeepAlive = DateTime.fromMillisecondsSinceEpoch(0);
   bool _warningOpen = false;
-
-  /// The "Still there?" dialog's context while it is open, so signing out
-  /// (idle timeout or any other way) can close it.
-  BuildContext? _warningContext;
 
   static String? _readPref(String key) {
     try {
@@ -72,14 +77,21 @@ class _AppShellState extends State<AppShell> {
     super.initState();
     unawaited(_loadHealth());
     _healthTimer = Timer.periodic(const Duration(seconds: 30), (_) => unawaited(_loadHealth()));
+    // Coming back to the tab (or waking the PC) re-checks the idle clock at
+    // once rather than waiting for a throttled tick.
+    try {
+      _visibilitySub = html.document.onVisibilityChange.listen((_) => _checkIdle());
+      _focusSub = html.window.onFocus.listen((_) => _checkIdle());
+    } catch (_) {}
     unawaited(_microsoftReturnOrRestore());
   }
 
   @override
   void dispose() {
     _healthTimer?.cancel();
-    _idleTimer?.cancel();
-    _warnTimer?.cancel();
+    _idleTicker?.cancel();
+    unawaited(_visibilitySub?.cancel());
+    unawaited(_focusSub?.cancel());
     _refreshDebounce?.cancel();
     realtime.dispose();
     super.dispose();
@@ -292,15 +304,19 @@ class _AppShellState extends State<AppShell> {
 
   void _signedOut({String? message}) {
     realtime.dispose();
-    _idleTimer?.cancel();
-    _warnTimer?.cancel();
+    _idleTicker?.cancel();
+    _idleTicker = null;
     IdleClock.deadline = null;
-    _closeIdleWarning();
     api.token = null;
     api.csrfToken = null;
     api.sectionCode = null;
     _splashDone = false;
     if (!mounted) return;
+    // Take down every dialog over the app — the "Still there?" one and any
+    // other (PO detail, a confirm, ...) — so none is left on the login page.
+    // This works on the navigator's route list, so it also removes a dialog
+    // that was pushed in a hidden tab and has not been built yet.
+    Navigator.of(context).popUntil((route) => route.isFirst);
     setState(() {
       me = null;
       section = null;
@@ -313,14 +329,22 @@ class _AppShellState extends State<AppShell> {
   // ------------------------------------------------------------- idle / live
 
   void _armIdleTimer() {
-    _idleTimer?.cancel();
-    _warnTimer?.cancel();
-    const idle = Duration(minutes: AppConfig.idleTimeoutMinutes);
-    IdleClock.deadline = DateTime.now().add(idle);
-    _warnTimer = Timer(idle - IdleClock.warnLead, () => unawaited(_showIdleWarning()));
-    _idleTimer = Timer(idle, () {
-      if (me != null) _signedOut(message: 'Signed out after ${AppConfig.idleTimeoutMinutes} minutes without activity.');
-    });
+    IdleClock.deadline = DateTime.now().add(const Duration(minutes: AppConfig.idleTimeoutMinutes));
+    _idleTicker ??= Timer.periodic(const Duration(seconds: 1), (_) => _checkIdle());
+  }
+
+  /// Signs out once the deadline has passed, or opens the warning inside its
+  /// last [IdleClock.warnLead]. Past the deadline it never opens the warning:
+  /// a tick that arrives late (sleep, hidden tab) goes straight to sign-out.
+  void _checkIdle() {
+    final at = IdleClock.deadline;
+    if (!mounted || me == null || at == null) return;
+    final now = DateTime.now();
+    if (!now.isBefore(at)) {
+      _signedOut(message: 'Signed out after ${AppConfig.idleTimeoutMinutes} minutes without activity.');
+    } else if (!_warningOpen && !now.isBefore(at.subtract(IdleClock.warnLead))) {
+      unawaited(_showIdleWarning());
+    }
   }
 
   void _onActivity() {
@@ -334,13 +358,12 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<void> _showIdleWarning() async {
-    if (!mounted || me == null) return;
+    if (!mounted || me == null || _warningOpen) return;
     _warningOpen = true;
     final stay = await showGlassDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) {
-        _warningContext = ctx;
         return AppDialog(
           title: 'Still there?',
           icon: Icons.timer_outlined,
@@ -355,21 +378,19 @@ class _AppShellState extends State<AppShell> {
       },
     );
     _warningOpen = false;
-    _warningContext = null;
+    // null: [_signedOut] took the dialog down — neither stay nor sign out.
     if (stay == true) {
+      // "Stay" clicked after the deadline (a late tick) cannot revive it.
+      final at = IdleClock.deadline;
+      if (me == null || at == null || !DateTime.now().isBefore(at)) {
+        _checkIdle();
+        return;
+      }
       _lastKeepAlive = DateTime.fromMillisecondsSinceEpoch(0);
       _onActivity();
     } else if (stay == false) {
       await logout();
     }
-  }
-
-  /// Takes the "Still there?" dialog down if it is showing. It then returns
-  /// null, which [_showIdleWarning] treats as neither stay nor sign out.
-  void _closeIdleWarning() {
-    final ctx = _warningContext;
-    _warningContext = null;
-    if (ctx != null && ctx.mounted) Navigator.of(ctx).pop();
   }
 
   void _onRealtime(String event, dynamic data) {
