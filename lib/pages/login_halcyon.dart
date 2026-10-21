@@ -330,9 +330,34 @@ class _HalcyonSceneState extends State<HalcyonScene> with SingleTickerProviderSt
 
   double lastSky = -99;
 
+  /// The tone the widgets on top of the scene were last built in.
+  bool toneDay = halcyonIsDay();
+
   void _frame(Duration elapsed) {
     model.tick(elapsed.inMicroseconds / 1000000);
     if (HcWater.on) _refreshSky();
+    _followTone();
+  }
+
+  /// Rebuilds everything floating on the scene when the clock crosses noon.
+  ///
+  /// The painter re-reads [_HcPalette] every frame, so the sky turns over by
+  /// itself — but the card is ordinary widgets, and most of it is `const` (the
+  /// intro half above all), so a page left open across noon kept its morning
+  /// blue/gold card on the violet night sky. Marking the subtree dirty rebuilds
+  /// it in place: the typed email, the focus and the caret all survive, which a
+  /// new key on the card would not.
+  void _followTone() {
+    final day = halcyonIsDay();
+    if (day == toneDay) return;
+    toneDay = day;
+    if (!mounted) return;
+    void dirty(Element e) {
+      e.markNeedsBuild();
+      e.visitChildren(dirty);
+    }
+
+    (context as Element).visitChildren(dirty);
   }
 
   /// Re-snapshots the sky for the water to mirror, a few times a second.
