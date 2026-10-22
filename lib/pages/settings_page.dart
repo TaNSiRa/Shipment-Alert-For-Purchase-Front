@@ -383,10 +383,12 @@ class _MailSettingsState extends State<_MailSettings> with _SettingsData {
                 label: 'Send at (Thai time)',
                 child: InkWell(
                   onTap: () async {
-                    final picked = await showTimePicker(
-                        context: context, initialTime: time);
-                    if (picked != null) {
-                      setState(() => time = picked);
+                    final picked = await askTime(context, _time);
+                    if (picked != null && mounted) {
+                      final parts = picked.split(':');
+                      setState(() => time = TimeOfDay(
+                          hour: int.parse(parts[0]),
+                          minute: int.parse(parts[1])));
                       unawaited(saveSettings({'mail.dailyTime': _time}));
                     }
                   },
@@ -1070,7 +1072,7 @@ class _ImportHistory extends StatelessWidget {
               SizedBox(
                   width: 260,
                   child: Text(
-                      '${b['totalRows']} lines · ${b['created']} POs created · ${b['skipped']} skipped',
+                      '${b['totalRows']} lines · ${b['created']} POs created${(intFrom(b['updated']) ?? 0) > 0 ? ' · ${b['updated']} updated' : ''} · ${b['skipped']} skipped',
                       style: DsType.meta)),
               SizedBox(
                 width: 36,

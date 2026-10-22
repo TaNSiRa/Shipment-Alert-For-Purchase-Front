@@ -358,8 +358,8 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
                 ('Type', 80.0),
                 ('Qty', 90.0),
                 ('Price', 110.0),
-                ('', 30.0),
-                ('Lead time', 74.0)
+                ('Lead time', 74.0),
+                ('', 30.0)
               ])
                 h.$2 == null
                     ? Expanded(
@@ -390,19 +390,6 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
                         : '${fmtMoney(i['netPrice'])} ${i['currency'] ?? ''}',
                     110),
                 SizedBox(
-                  width: 30,
-                  child: i['raw'] == null
-                      ? null
-                      : IconButton(
-                          padding: EdgeInsets.zero,
-                          tooltip: 'All columns from the SAP file',
-                          icon: const Icon(Icons.table_rows_outlined,
-                              size: 16, color: DsColors.iconSoft),
-                          onPressed: () =>
-                              _showRaw(Map<String, dynamic>.from(i)),
-                        ),
-                ),
-                SizedBox(
                   width: 74,
                   child: i['deleted'] == true
                       ? const Tooltip(
@@ -418,43 +405,36 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
                           : Text('${i['leadTimeDays']} d',
                               style: mono(size: 12, weight: FontWeight.w600)),
                 ),
+                SizedBox(
+                  width: 30,
+                  child: i['raw'] == null
+                      ? null
+                      : IconButton(
+                          padding: EdgeInsets.zero,
+                          tooltip: 'All columns from the SAP file',
+                          icon: const Icon(Icons.table_rows_outlined,
+                              size: 16, color: DsColors.iconSoft),
+                          onPressed: () =>
+                              _showRaw(Map<String, dynamic>.from(i)),
+                        ),
+                ),
               ]),
             ),
         ]);
   }
 
-  void _showRaw(Map<String, dynamic> item) {
-    final raw = Map<String, dynamic>.from(item['raw'] as Map);
-    unawaited(showGlassDialog<void>(
+  Future<void> _showRaw(Map<String, dynamic> item) async {
+    final scope = AppScope.of(context);
+    final saved = await showGlassDialog<bool>(
       context: context,
-      builder: (ctx) => AppDialog(
-        title:
-            'SAP line ${item['itemNo'] ?? ''} · ${item['materialCode'] ?? ''}',
-        subtitle:
-            'Every column of this row in the uploaded Excel (row ${item['sourceRow'] ?? '-'})',
-        icon: Icons.table_rows_outlined,
-        width: 560,
-        body: Column(children: [
-          for (final e in raw.entries)
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 7),
-              decoration: const BoxDecoration(
-                  border: Border(bottom: BorderSide(color: DsColors.lineSoft))),
-              child:
-                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                SizedBox(width: 220, child: Text(e.key, style: DsType.meta)),
-                Expanded(
-                    child:
-                        SelectableText('${e.value}', style: DsType.rowTitle)),
-              ]),
-            ),
-        ]),
-        actions: [
-          DsOutlineButton(
-              label: 'Close', height: 38, onPressed: () => Navigator.pop(ctx))
-        ],
+      builder: (_) => _SapLineDialog(
+        api: scope.api,
+        poId: widget.id,
+        item: item,
+        canEdit: scope.canEdit && po?['status'] != 'CANCELLED',
       ),
-    ));
+    );
+    if (saved == true) await load();
   }
 
   Widget _history(List<Map> history) {
@@ -532,6 +512,10 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
       'CANCELLED' => 'PO cancelled',
       'REOPENED' => 'PO reopened',
       'EDITED' => 'PO edited',
+      'ITEM_EDITED' =>
+        'Line ${d['itemNo'] ?? ''} edited${d['materialCode'] == null ? '' : ' · ${d['materialCode']}'}',
+      'IMPORT_UPDATED' =>
+        'Updated from Excel${d['fileName'] == null ? '' : ' · ${d['fileName']}'}',
       _ => '${h['action']}',
     };
   }
@@ -559,6 +543,25 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
               ? '${e.key}: ${v['from'] ?? '-'} → ${v['to'] ?? '-'}'
               : '${e.key}';
         }).join(' · ');
+      case 'ITEM_EDITED':
+        final changes = (d['changes'] as Map?) ?? const {};
+        return changes.entries.map((e) {
+          final v = (e.value as Map?) ?? const {};
+          return '${e.key}: ${v['from'] ?? '-'} → ${v['to'] ?? '-'}';
+        }).join(' · ');
+      case 'IMPORT_UPDATED':
+        String pairs(Map? m) => (m ?? const {}).entries.map((e) {
+              final v = (e.value as Map?) ?? const {};
+              return '${e.key}: ${v['from'] ?? '-'} → ${v['to'] ?? '-'}';
+            }).join(' · ');
+        return [
+          if (((d['changes'] as Map?) ?? const {}).isNotEmpty)
+            pairs(d['changes'] as Map?),
+          for (final l in ((d['lines'] as List?) ?? const []).cast<Map>())
+            l['kind'] == 'ADDED'
+                ? 'Line ${l['itemNo'] ?? '-'} added'
+                : 'Line ${l['itemNo'] ?? '-'}: ${pairs(l['changes'] as Map?)}',
+        ].join(' · ');
       default:
         return '';
     }
@@ -726,6 +729,167 @@ class _TimelineRow extends StatelessWidget {
           ),
         ),
       ]),
+    );
+  }
+}
+
+/// Every column of one stored SAP line. Editors can switch it to edit mode;
+/// PO-wide columns (PO No., supplier, date…) stay read-only — they are
+/// changed with Edit PO so the PO and its lines cannot disagree.
+class _SapLineDialog extends StatefulWidget {
+  const _SapLineDialog(
+      {required this.api,
+      required this.poId,
+      required this.item,
+      required this.canEdit});
+  final ApiClient api;
+  final int poId;
+  final Map<String, dynamic> item;
+  final bool canEdit;
+
+  @override
+  State<_SapLineDialog> createState() => _SapLineDialogState();
+}
+
+class _SapLineDialogState extends State<_SapLineDialog> {
+  late final Map<String, dynamic> raw =
+      Map<String, dynamic>.from(widget.item['raw'] as Map);
+  late final Set<String> locked = {
+    for (final k in (widget.item['rawLocked'] as List?) ?? const []) '$k'
+  };
+  late final Map<String, TextEditingController> fields = {
+    for (final e in raw.entries)
+      e.key: TextEditingController(text: _text(e.value))
+  };
+  bool editing = false;
+  bool busy = false;
+  String? error;
+
+  static String _text(dynamic v) => v == null ? '' : '$v';
+
+  @override
+  void dispose() {
+    for (final c in fields.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final values = <String, dynamic>{
+      for (final e in fields.entries)
+        if (!locked.contains(e.key) && e.value.text.trim() != _text(raw[e.key]))
+          e.key: e.value.text.trim(),
+    };
+    if (values.isEmpty) return setState(() => editing = false);
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      await widget.api.patchJson(
+          '/pos/${widget.poId}/items/${widget.item['id']}', {'values': values});
+      if (mounted) {
+        AppToast.success(context, 'Line ${widget.item['itemNo'] ?? ''} updated');
+        Navigator.pop(context, true);
+      }
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          busy = false;
+          error = friendlyError(e.message);
+        });
+      }
+    }
+  }
+
+  void _cancelEdit() => setState(() {
+        for (final e in fields.entries) {
+          e.value.text = _text(raw[e.key]);
+        }
+        editing = false;
+        error = null;
+      });
+
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+    return AppDialog(
+      title: 'SAP line ${item['itemNo'] ?? ''} · ${item['materialCode'] ?? ''}',
+      subtitle: editing
+          ? 'Editing this line — PO-wide columns are changed with Edit PO'
+          : 'Every column of this row in the uploaded Excel (row ${item['sourceRow'] ?? '-'})',
+      icon: editing ? Icons.edit_outlined : Icons.table_rows_outlined,
+      width: 560,
+      body: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        if (error != null) ...[
+          InfoStrip(
+              text: error!, icon: Icons.error_outline, color: DsColors.redFg),
+          const SizedBox(height: 8),
+        ],
+        for (final e in raw.entries)
+          Container(
+            padding: EdgeInsets.symmetric(vertical: editing ? 4 : 7),
+            decoration: const BoxDecoration(
+                border: Border(bottom: BorderSide(color: DsColors.lineSoft))),
+            child: Row(
+                crossAxisAlignment: editing
+                    ? CrossAxisAlignment.center
+                    : CrossAxisAlignment.start,
+                children: [
+                  SizedBox(width: 220, child: Text(e.key, style: DsType.meta)),
+                  Expanded(
+                    child: editing && !locked.contains(e.key)
+                        ? TextField(
+                            controller: fields[e.key],
+                            enabled: !busy,
+                            maxLength: 255,
+                            style: DsType.rowTitle,
+                            decoration: dsInput().copyWith(counterText: ''),
+                            onSubmitted: (_) => _save(),
+                          )
+                        : Row(children: [
+                            Expanded(
+                                child: SelectableText(_text(e.value),
+                                    style: editing
+                                        ? DsType.rowTitle
+                                            .copyWith(color: DsColors.muted)
+                                        : DsType.rowTitle)),
+                            if (editing)
+                              const Tooltip(
+                                message: 'PO-wide — change it with Edit PO',
+                                child: Icon(Icons.lock_outline,
+                                    size: 14, color: DsColors.iconSoft),
+                              ),
+                          ]),
+                  ),
+                ]),
+          ),
+      ]),
+      actions: [
+        if (editing) ...[
+          DsOutlineButton(
+              label: 'Cancel',
+              height: 38,
+              onPressed: busy ? null : _cancelEdit),
+          DsPrimaryButton(
+              label: busy ? 'Saving…' : 'Save',
+              icon: Icons.check,
+              height: 38,
+              onPressed: busy ? null : _save),
+        ] else ...[
+          if (widget.canEdit)
+            DsOutlineButton(
+                label: 'Edit',
+                icon: Icons.edit_outlined,
+                height: 38,
+                onPressed: () => setState(() => editing = true)),
+          DsOutlineButton(
+              label: 'Close',
+              height: 38,
+              onPressed: () => Navigator.pop(context)),
+        ],
+      ],
     );
   }
 }

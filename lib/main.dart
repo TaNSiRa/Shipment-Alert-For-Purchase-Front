@@ -49,6 +49,7 @@ part 'shared/smooth_scroll.dart';
 part 'shared/scroll_tooltip_guard.dart';
 part 'shared/toast.dart';
 part 'shared/searchable_dropdown.dart';
+part 'shared/time_entry_dialog.dart';
 part 'shared/page_components.dart';
 part 'shared/helpers.dart';
 part 'shared/charts.dart';

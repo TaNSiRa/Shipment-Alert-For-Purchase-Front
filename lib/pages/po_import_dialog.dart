@@ -129,15 +129,30 @@ class _PoImportDialogState extends State<_PoImportDialog> {
                     onPressed: busy ? null : pick),
               if (summary != null)
                 DsPrimaryButton(
-                  label: busy
-                      ? 'Importing…'
-                      : 'Import ${plural(chosen.length, 'PO')}',
+                  label: busy ? 'Importing…' : _commitLabel(),
                   icon: Icons.cloud_upload_outlined,
                   height: 40,
                   onPressed: busy || chosen.isEmpty ? null : commit,
                 ),
             ],
     );
+  }
+
+  // POs the user can tick: new ones, and ones already in the system that the
+  // file changes (those start unticked — applying them overwrites the PO).
+  bool _selectable(Map<String, dynamic> p) =>
+      p['status'] == 'NEW' || p['status'] == 'CHANGED';
+
+  String _commitLabel() {
+    final updates = pos
+        .where((p) => p['status'] == 'CHANGED' && chosen.contains('${p['poNo']}'))
+        .length;
+    final creates = chosen.length - updates;
+    if (creates == 0 && updates == 0) return 'Import';
+    return [
+      if (creates > 0) 'Import ${plural(creates, 'PO')}',
+      if (updates > 0) 'Update ${plural(updates, 'PO')}',
+    ].join(' · ');
   }
 
   Widget _start() {
@@ -196,7 +211,7 @@ class _PoImportDialogState extends State<_PoImportDialog> {
             const SizedBox(width: 14),
             Expanded(
               child: _tip(Icons.rule_outlined, 'Checked before saving',
-                  'Each PO is matched to the Supplier and Material Master to get its lead time and ETA. POs already in the system, future dates and deleted SAP lines are flagged.'),
+                  'Each PO is matched to the Supplier and Material Master to get its lead time and ETA. POs already in the system are compared with the file — changed columns are listed and you choose which POs to update. Future dates and deleted SAP lines are flagged.'),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -239,7 +254,7 @@ class _PoImportDialogState extends State<_PoImportDialog> {
 
   Widget _preview() {
     final s = summary!;
-    final newPos = pos.where((p) => p['status'] == 'NEW').toList();
+    final newPos = pos.where(_selectable).toList();
     final allChosen = newPos.isNotEmpty &&
         newPos.every((p) => chosen.contains('${p['poNo']}'));
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -258,6 +273,7 @@ class _PoImportDialogState extends State<_PoImportDialog> {
         _stat('POs in file', s['pos'], DsColors.navy),
         _stat('Ready to import', s['ready'], DsColors.greenFg),
         _stat('With warnings', s['withWarnings'], DsColors.amberFg),
+        _stat('Changed in file', s['changed'], DsColors.blueFg),
         _stat('Already in system', s['existing'], DsColors.muted),
         _stat('Errors', s['errors'], DsColors.redFg),
         _stat('New suppliers', s['newSuppliers'], DsColors.blueFg),
@@ -351,6 +367,7 @@ class _PoImportDialogState extends State<_PoImportDialog> {
       'NEW' => warnings.isEmpty
           ? (DsColors.greenFg, DsColors.greenBg, 'Ready')
           : (DsColors.amberFg, DsColors.amberBg, 'Ready · check'),
+      'CHANGED' => (DsColors.blueFg, DsColors.blueBg, 'Changed · update?'),
       'EXISTS' => (DsColors.muted, DsColors.chip, 'Already added'),
       _ => (DsColors.redFg, DsColors.redBg, 'Error'),
     };
@@ -366,7 +383,7 @@ class _PoImportDialogState extends State<_PoImportDialog> {
             child: Row(children: [
               SizedBox(
                 width: 40,
-                child: status == 'NEW'
+                child: _selectable(p)
                     ? Checkbox(
                         value: chosen.contains(no),
                         onChanged: (v) => setState(() =>
@@ -451,6 +468,7 @@ class _PoImportDialogState extends State<_PoImportDialog> {
                             text: '$w',
                             icon: Icons.warning_amber_rounded,
                             color: DsColors.amberFg)),
+                  if (p['changes'] is Map) _changes(p['changes'] as Map),
                   if (p['leadTimeSource'] != 'MATERIAL')
                     const Padding(
                       padding: EdgeInsets.only(bottom: 6),
@@ -502,8 +520,63 @@ class _PoImportDialogState extends State<_PoImportDialog> {
     );
   }
 
+  // What the file would change on a PO already in the system: PO-level values
+  // first, then each line (changed columns, or a line new in the file).
+  Widget _changes(Map changes) {
+    String v(dynamic x) => x == null || '$x'.isEmpty ? '-' : '$x';
+    final po = (changes['po'] as List? ?? const []).cast<Map>();
+    final lines = (changes['lines'] as List? ?? const [])
+        .cast<Map>()
+        .where((l) => l['kind'] != 'MISSING')
+        .toList();
+    if (po.isEmpty && lines.isEmpty) return const SizedBox.shrink();
+    Widget row(String what, String detail) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            SizedBox(
+                width: 150,
+                child: Text(what,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: DsType.metaSm)),
+            Expanded(child: Text(detail, style: DsType.meta)),
+          ]),
+        );
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: DsColors.blueBg.withValues(alpha: .5),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: DsColors.blueFg.withValues(alpha: .2)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const Text('Different from the system (system → file)',
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: DsColors.blueFg)),
+        const SizedBox(height: 6),
+        for (final c in po)
+          row('${c['label']}', '${v(c['from'])} → ${v(c['to'])}'),
+        for (final l in lines)
+          row(
+            'Line ${l['itemNo'] ?? '-'}${l['materialCode'] == null ? '' : ' · ${l['materialCode']}'}',
+            l['kind'] == 'ADDED'
+                ? 'New line — will be added'
+                : (l['columns'] as List)
+                    .cast<Map>()
+                    .map((c) =>
+                        '${c['header']}: ${v(c['from'])} → ${v(c['to'])}')
+                    .join(' · '),
+          ),
+      ]),
+    );
+  }
+
   Widget _done() {
     final created = (done!['created'] as List).length;
+    final updated = (done!['updated'] as List? ?? const []).length;
     return Column(mainAxisSize: MainAxisSize.min, children: [
       const SizedBox(height: 10),
       Container(
@@ -515,7 +588,12 @@ class _PoImportDialogState extends State<_PoImportDialog> {
             const Icon(Icons.check_rounded, size: 40, color: DsColors.greenFg),
       ),
       const SizedBox(height: 14),
-      Text('${plural(created, 'PO')} imported', style: DsType.pageTitle),
+      Text(
+          [
+            if (created > 0 || updated == 0) '${plural(created, 'PO')} imported',
+            if (updated > 0) '${plural(updated, 'PO')} updated',
+          ].join(' · '),
+          style: DsType.pageTitle),
       const SizedBox(height: 6),
       Text(
         [
