@@ -128,7 +128,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
             child: loading
                 ? _skeleton()
                 : error != null
-                    ? Center(child: ErrorPanel(message: error!, onRetry: load))
+                    ? ErrorPanel(message: error!, onRetry: load, embedded: true)
                     : rows.isEmpty
                         ? const DsEmptyState(
                             icon: Icons.route_outlined,

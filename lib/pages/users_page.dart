@@ -487,7 +487,7 @@ class _UsersPageState extends State<UsersPage> {
             child: loading
                 ? MinWidthScroll(minWidth: 960, child: _skeleton())
                 : error != null
-                    ? Center(child: ErrorPanel(message: error!, onRetry: load))
+                    ? ErrorPanel(message: error!, onRetry: load, embedded: true)
                     : MinWidthScroll(
                         minWidth: 960,
                         child: Builder(builder: (context) {

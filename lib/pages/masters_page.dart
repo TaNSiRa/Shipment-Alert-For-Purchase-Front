@@ -391,7 +391,7 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
                       Expanded(child: _skeleton(scope)),
                     ]))
                 : error != null
-                    ? Center(child: ErrorPanel(message: error!, onRetry: load))
+                    ? ErrorPanel(message: error!, onRetry: load, embedded: true)
                     : rows.isEmpty
                         ? const DsEmptyState(
                             icon: Icons.storefront_outlined,
@@ -918,7 +918,7 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
             // The table is laid out even while loading: its height is what
             // decides the page size of the first request.
             child: error != null
-                    ? Center(child: ErrorPanel(message: error!, onRetry: load))
+                    ? ErrorPanel(message: error!, onRetry: load, embedded: true)
                     : MinWidthScroll(
                         minWidth: 1100,
                         child: Column(children: [

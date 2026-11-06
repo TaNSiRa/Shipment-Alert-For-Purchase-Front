@@ -490,10 +490,7 @@ class _PoTablePageState extends State<PoTablePage> {
   Widget _body(AppScope scope, double rowH) {
     if (loading && rows.isEmpty) return _skeleton(scope, rowH);
     if (error != null) {
-      return Center(
-          child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: ErrorPanel(message: error!, onRetry: load)));
+      return ErrorPanel(message: error!, onRetry: load, embedded: true);
     }
     if (rows.isEmpty) {
       final filtered = search.text.isNotEmpty ||
@@ -689,7 +686,9 @@ class _PoTablePageState extends State<PoTablePage> {
             SizedBox(
               width: _wAct,
               child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                if (active && scope.canEdit)
+                // Past the last step there is nothing left to close: no
+                // button (it only read "Done" and opened an empty dialog).
+                if (active && scope.canEdit && (intFrom(po['currentStep']) ?? 0) <= kStepCount)
                   Flexible(child: _stepAction(scope, po)),
                 _rowMenu(scope, po),
               ]),

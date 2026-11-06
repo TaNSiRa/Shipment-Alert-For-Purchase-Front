@@ -339,24 +339,35 @@ class PageBody extends StatelessWidget {
   }
 }
 
+/// A failed load: cloud-off icon, the message, and "Try again".
+///
+/// On its own in a page it is a card. Inside something that is ALREADY a card
+/// — the table sheet of Shipments, Road Map, the master lists — pass
+/// [embedded]: it then draws no card of its own and sits in the middle of the
+/// space it is given, instead of a second card stretched down the sheet with
+/// its text stuck at the top.
 class ErrorPanel extends StatelessWidget {
-  const ErrorPanel({super.key, required this.message, this.onRetry});
+  const ErrorPanel({super.key, required this.message, this.onRetry, this.embedded = false});
   final String message;
   final VoidCallback? onRetry;
+  final bool embedded;
   @override
   Widget build(BuildContext context) {
-    return DsCard(
-      padding: const EdgeInsets.all(28),
-      child: Column(children: [
-        const Icon(Icons.cloud_off_outlined, color: DsColors.redFg, size: 34),
-        const SizedBox(height: 10),
-        Text(message, textAlign: TextAlign.center, style: const TextStyle(color: DsColors.text, fontSize: 13)),
-        if (onRetry != null) ...[
-          const SizedBox(height: 14),
-          DsOutlineButton(label: 'Try again', icon: Icons.refresh, height: 38, onPressed: onRetry),
-        ],
-      ]),
-    );
+    final content = Column(mainAxisSize: MainAxisSize.min, children: [
+      const Icon(Icons.cloud_off_outlined, color: DsColors.redFg, size: 34),
+      const SizedBox(height: 10),
+      Text(message, textAlign: TextAlign.center, style: const TextStyle(color: DsColors.text, fontSize: 13)),
+      if (onRetry != null) ...[
+        const SizedBox(height: 14),
+        DsOutlineButton(label: 'Try again', icon: Icons.refresh, height: 38, onPressed: onRetry),
+      ],
+    ]);
+    if (embedded) {
+      return Center(
+        child: SingleChildScrollView(padding: const EdgeInsets.all(28), child: content),
+      );
+    }
+    return DsCard(padding: const EdgeInsets.all(28), child: content);
   }
 }
 
