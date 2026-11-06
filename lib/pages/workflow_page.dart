@@ -14,7 +14,6 @@ class _WorkflowPageState extends State<WorkflowPage> {
   String? error;
   bool editing = false;
   List<Map<String, dynamic>> draft = [];
-  int exampleLead = 76;
   bool saving = false;
   int _tick = -1;
 
@@ -55,38 +54,7 @@ class _WorkflowPageState extends State<WorkflowPage> {
 
   // Same rule as the server (services/workflowService.js computeSchedule), so
   // the example and the editor preview match what POs will get.
-  Map<int, DateTime> _schedule(
-      List<Map<String, dynamic>> s, DateTime n1, int lead) {
-    final byNo = {for (final x in s) intFrom(x['stepNo'])!: x};
-    final arrival =
-        s.firstWhere((x) => x['isArrival'] == true, orElse: () => s[8]);
-    final flex = s.where((x) => x['isFlex'] == true).toList();
-    int? flexDays;
-    if (flex.isNotEmpty) {
-      flexDays = intFrom(flex.first['offsetDays']);
-      if (settings['useMaterialLeadTime'] == true && lead > 0) {
-        final chain = <Map<String, dynamic>>[];
-        Map<String, dynamic>? cur = arrival;
-        var guard = 0;
-        while (cur != null && intFrom(cur['stepNo']) != 1 && guard < 12) {
-          chain.add(cur);
-          cur = byNo[intFrom(cur['anchorStepNo'])];
-          guard++;
-        }
-        if (chain.any((c) => c['stepNo'] == flex.first['stepNo'])) {
-          final others = chain
-              .where((c) => c['stepNo'] != flex.first['stepNo'])
-              .fold<int>(
-                  0,
-                  (a, c) =>
-                      a +
-                      (c['offsetMode'] == 'DAYS'
-                          ? (intFrom(c['offsetDays']) ?? 0)
-                          : 0));
-          flexDays = max(intFrom(settings['minFlexDays']) ?? 0, lead - others);
-        }
-      }
-    }
+  Map<int, DateTime> _schedule(List<Map<String, dynamic>> s, DateTime n1) {
     final due = <int, DateTime>{1: n1};
     final sorted = [...s]..sort((a, b) =>
         (intFrom(a['stepNo']) ?? 0).compareTo(intFrom(b['stepNo']) ?? 0));
@@ -97,9 +65,7 @@ class _WorkflowPageState extends State<WorkflowPage> {
       if (x['offsetMode'] == 'END_OF_MONTH') {
         due[n] = DateTime(base.year, base.month + 1, 0);
       } else {
-        final days = x['isFlex'] == true && flexDays != null
-            ? flexDays
-            : (intFrom(x['offsetDays']) ?? 0);
+        final days = intFrom(x['offsetDays']) ?? 0;
         due[n] = settings['dayMode'] == 'WORKING'
             ? _addWorking(base, days)
             : base.add(Duration(days: days));
@@ -129,8 +95,8 @@ class _WorkflowPageState extends State<WorkflowPage> {
     }
     final days = intFrom(s['offsetDays']) ?? 0;
     final unit = settings['dayMode'] == 'WORKING' ? 'working days' : 'days';
-    if (s['isFlex'] == true && settings['useMaterialLeadTime'] == true) {
-      return '$anchorName + material lead time (default +$days)';
+    if (s['isArrival'] == true) {
+      return 'Delivery date (Input 1, editable) · else $anchorName + $days $unit';
     }
     return days == 0 ? 'Same day as $anchorName' : '$anchorName + $days $unit';
   }
@@ -177,8 +143,9 @@ class _WorkflowPageState extends State<WorkflowPage> {
             color: DsColors.heading)),
     SizedBox(height: 4),
     Text(
-        'Nine steps from issuing the PO to the goods arriving at the factory. People enter only the PO date (N1) — '
-        'every later step is just ticked when it happens, and the next due date is worked out from that real date.',
+        'Seven steps from issuing the PO to the goods arriving at the factory, driven by four inputs: the DATA EXPORT BY SAP '
+        '(PO date N1 + Delivery date), the OCR ACK file (step 2, groups POs into a shipment), the OCR SI file (step 3, ETD / ETA) '
+        'and the Delivery date for step 7, which can be changed on the PO at any time. Each next due date is worked out from the real date.',
         style: DsType.meta),
   ]);
 
@@ -276,7 +243,7 @@ class _WorkflowPageState extends State<WorkflowPage> {
     );
   }
 
-  /// The nine steps on the RAP request-timeline board: a disc per step over a
+  /// The seven steps on the RAP request-timeline board: a disc per step over a
   /// raised rail, its milestone floating above and its due-date rule below.
   /// Too narrow for the board → the flat tiles of [_flowTiles].
   Widget _flow(List<Map<String, dynamic>> s) {
@@ -297,9 +264,7 @@ class _WorkflowPageState extends State<WorkflowPage> {
                 ? null
                 : '${s[i]['milestone']}',
             pills: [
-              if (s[i]['isArrival'] == true) ('ARRIVAL = ETA', DsColors.tealFg),
-              if (s[i]['isFlex'] == true)
-                ('ABSORBS LEAD TIME', DsColors.navy),
+              if (s[i]['isArrival'] == true) ('ARRIVAL = DELIVERY DATE', DsColors.tealFg),
             ],
             lines: [_rule(s[i], s)],
             glow: s[i]['isArrival'] == true,
@@ -324,11 +289,7 @@ class _WorkflowPageState extends State<WorkflowPage> {
                     ? DsColors.tealBg
                     : DsColors.subtle,
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                    color: s[i]['isFlex'] == true
-                        ? DsColors.navyBorder
-                        : DsColors.cardBorder,
-                    width: s[i]['isFlex'] == true ? 1.6 : 1),
+                border: Border.all(color: DsColors.cardBorder),
               ),
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -360,14 +321,9 @@ class _WorkflowPageState extends State<WorkflowPage> {
                             fontSize: 11.5,
                             fontWeight: FontWeight.w600,
                             color: DsColors.navyDeep)),
-                    if (s[i]['isFlex'] == true ||
-                        s[i]['isArrival'] == true) ...[
+                    if (s[i]['isArrival'] == true) ...[
                       const SizedBox(height: 4),
-                      Text(
-                          s[i]['isArrival'] == true
-                              ? 'Arrival = ETA'
-                              : 'Absorbs the lead time',
-                          style: DsType.metaSm),
+                      const Text('Arrival = Delivery date', style: DsType.metaSm),
                     ],
                   ]),
             ),
@@ -383,37 +339,19 @@ class _WorkflowPageState extends State<WorkflowPage> {
 
   Widget _example() {
     final n1 = DateTime.parse(todayIso());
-    final due = _schedule(steps, n1, exampleLead);
+    final due = _schedule(steps, n1);
     return DsCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           const Expanded(
               child: DsCardTitle('Worked example — a PO issued today',
                   icon: Icons.calculate_outlined)),
-          const Text('Material lead time  ', style: DsType.meta),
-          DsSegmented(
-            selected: const [30, 60, 76, 120, 150].indexOf(exampleLead),
-            length: 5,
-            itemBuilder: (context, i, t) => Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              child: Text('${const [30, 60, 76, 120, 150][i]} d',
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Color.lerp(DsColors.muted, DsColors.navyDeep, t))),
-            ),
-            onSelect: (i) =>
-                setState(() => exampleLead = const [30, 60, 76, 120, 150][i]),
-          ),
         ]),
         const SizedBox(height: 6),
         Text(
-          settings['useMaterialLeadTime'] == true
-              ? 'The material master lead time stretches the "${steps.firstWhere((s) => s['isFlex'] == true, orElse: () => {
-                        'shortName': '-'
-                      })['shortName']}" step so that '
-                  'the goods arrive on PO date + lead time. Days are ${settings['dayMode'] == 'WORKING' ? 'working days (Mon–Fri)' : 'calendar days'}.'
-              : 'Fixed lead times (material lead time is not used). Days are ${settings['dayMode'] == 'WORKING' ? 'working days' : 'calendar days'}.',
+          'Every date comes from the lead times of the steps above (the material master lead time is not used). '
+          'The last step is due on each PO\'s Delivery date; the example shows the fallback when there is none. '
+          'Days are ${settings['dayMode'] == 'WORKING' ? 'working days (Mon–Fri)' : 'calendar days'}.',
           style: DsType.meta,
         ),
         const SizedBox(height: 14),
@@ -451,8 +389,6 @@ class _WorkflowPageState extends State<WorkflowPage> {
   Widget _editor() {
     final arrivalNo = draft.firstWhere((s) => s['isArrival'] == true,
         orElse: () => {})['stepNo'];
-    final flexNo = draft.firstWhere((s) => s['isFlex'] == true,
-        orElse: () => {})['stepNo'];
     return DsCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const DsCardTitle('Edit steps', icon: Icons.tune),
@@ -483,15 +419,13 @@ class _WorkflowPageState extends State<WorkflowPage> {
                 SizedBox(width: 10),
                 SizedBox(width: 80, child: Text('DAYS', style: DsType.eyebrow)),
                 SizedBox(width: 10),
-                SizedBox(
-                    width: 70, child: Text('LEAD TIME', style: DsType.eyebrow)),
-                SizedBox(width: 60, child: Text('ETA', style: DsType.eyebrow)),
+                SizedBox(width: 60, child: Text('ARRIVAL', style: DsType.eyebrow)),
                 Expanded(
                     flex: 2,
                     child: Text('REFERENCE FIELD', style: DsType.eyebrow)),
               ]),
               const SizedBox(height: 6),
-              for (final s in draft) _editRow(s, arrivalNo, flexNo),
+              for (final s in draft) _editRow(s, arrivalNo),
             ])),
         const SizedBox(height: 14),
         Row(children: [
@@ -517,7 +451,7 @@ class _WorkflowPageState extends State<WorkflowPage> {
     );
   }
 
-  Widget _editRow(Map<String, dynamic> s, dynamic arrivalNo, dynamic flexNo) {
+  Widget _editRow(Map<String, dynamic> s, dynamic arrivalNo) {
     final n = intFrom(s['stepNo'])!;
     final first = n == 1;
     InputDecoration dec() => dsInput().copyWith(
@@ -611,35 +545,11 @@ class _WorkflowPageState extends State<WorkflowPage> {
         ),
         const SizedBox(width: 10),
         SizedBox(
-          width: 70,
-          child: first || s['offsetMode'] == 'END_OF_MONTH'
-              ? const SizedBox()
-              : Tooltip(
-                  message: 'This step absorbs the material lead time',
-                  child: IconButton(
-                    icon: Icon(
-                        intFrom(flexNo) == n
-                            ? Icons.radio_button_checked
-                            : Icons.radio_button_unchecked,
-                        size: 20,
-                        color: intFrom(flexNo) == n
-                            ? DsColors.navy
-                            : DsColors.iconSoft),
-                    onPressed: () => setState(() {
-                      final turnOn = intFrom(flexNo) != n;
-                      for (final x in draft) {
-                        x['isFlex'] = turnOn && intFrom(x['stepNo']) == n;
-                      }
-                    }),
-                  ),
-                ),
-        ),
-        SizedBox(
           width: 60,
           child: first
               ? const SizedBox()
               : Tooltip(
-                  message: 'Goods at the factory (ETA)',
+                  message: 'Goods at the factory (due on the Delivery date)',
                   child: IconButton(
                     icon: Icon(
                         intFrom(arrivalNo) == n

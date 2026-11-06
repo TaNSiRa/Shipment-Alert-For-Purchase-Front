@@ -863,19 +863,13 @@ class _HalcyonWaterToggleState extends State<HalcyonWaterToggle> {
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 160),
                 curve: Curves.easeOut,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                padding: const EdgeInsets.fromLTRB(12, 5, 5, 5),
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: hover ? .14 : .07),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: Colors.white.withValues(alpha: hover ? .32 : .16)),
                 ),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(
-                    on ? Icons.waves : Icons.blur_circular_outlined,
-                    size: 15,
-                    color: on ? _HcPalette.inputFocus : Colors.white.withValues(alpha: .70),
-                  ),
-                  const SizedBox(width: 7),
                   Text(
                     on ? 'Realistic water' : 'Classic water',
                     style: TextStyle(
@@ -883,6 +877,16 @@ class _HalcyonWaterToggleState extends State<HalcyonWaterToggle> {
                       fontWeight: FontWeight.w600,
                       letterSpacing: .2,
                       color: Colors.white.withValues(alpha: .86),
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  // The pill is the tap target and the tooltip; the switch is
+                  // only its face. Left hit-testable it would flip the water
+                  // too, and one click would toggle twice.
+                  ExcludeSemantics(
+                    child: IgnorePointer(
+                      child: _HcWaterSwitch(
+                          on: on, onChanged: (v) => HcWater.enabled.value = v),
                     ),
                   ),
                 ]),
@@ -893,4 +897,110 @@ class _HalcyonWaterToggleState extends State<HalcyonWaterToggle> {
       },
     );
   }
+}
+
+/// The pill's switch: drawn ripples (rings on a pale glass track) when the
+/// water is classic, a live sea — the scene's own water colours, waves rolling
+/// under a water-drop knob — when it is simulated. Built on the app's shared
+/// switch shell so it moves like every other switch, just smaller and dressed
+/// for the dark login sky.
+class _HcWaterSwitch extends StatefulWidget {
+  const _HcWaterSwitch({required this.on, required this.onChanged});
+  final bool on;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  State<_HcWaterSwitch> createState() => _HcWaterSwitchState();
+}
+
+class _HcWaterSwitchState extends State<_HcWaterSwitch>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _swell = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 2400));
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _dsLoopWhile(context, _swell, widget.on);
+  }
+
+  @override
+  void didUpdateWidget(covariant _HcWaterSwitch old) {
+    super.didUpdateWidget(old);
+    _dsLoopWhile(context, _swell, widget.on);
+  }
+
+  @override
+  void dispose() {
+    _swell.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final on = widget.on;
+    final colour = DsMotion.of(context, _dsSwitchColour);
+    final deep = _HcPalette.water1;
+    return _DsSwitchShell(
+      value: on,
+      onChanged: widget.onChanged,
+      semanticLabel: null,
+      width: 42,
+      height: 24,
+      tapPadding: EdgeInsets.zero,
+      trackOn: [Color.lerp(_HcPalette.water0, Colors.white, .28)!, deep],
+      trackOff: const [Color(0x33ffffff), Color(0x1affffff)],
+      borderOff: const Color(0x40ffffff),
+      focusColor: Colors.white,
+      layers: [
+        Positioned.fill(
+          child: AnimatedOpacity(
+            duration: colour,
+            opacity: on ? 0 : 1,
+            child: const CustomPaint(painter: _HcRingsPainter()),
+          ),
+        ),
+        Positioned.fill(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(end: on ? 1 : 0),
+            duration: colour,
+            builder: (_, sea, __) => Opacity(
+              opacity: sea,
+              child: AnimatedBuilder(
+                animation: _swell,
+                builder: (_, __) =>
+                    CustomPaint(painter: _SeaPainter(_swell.value, sea)),
+              ),
+            ),
+          ),
+        ),
+      ],
+      knob: _dsKnobIcon(colour, on,
+          onIcon: Icons.water_drop_rounded,
+          onColour: deep,
+          offIcon: Icons.blur_circular_outlined,
+          offColour: const Color(0xff8c88a6),
+          size: 12),
+    );
+  }
+}
+
+/// Classic water's drawn ripples: two rings on the free (right) side.
+class _HcRingsPainter extends CustomPainter {
+  const _HcRingsPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = Offset(size.width - size.height / 2 - 1, size.height / 2);
+    final p = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.1;
+    p.color = Colors.white.withValues(alpha: .55);
+    canvas.drawCircle(c, 3, p);
+    p.color = Colors.white.withValues(alpha: .28);
+    canvas.drawCircle(c, 6.5, p);
+  }
+
+  @override
+  bool shouldRepaint(_HcRingsPainter old) => false;
 }

@@ -134,6 +134,16 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
                             color: DsColors.heading)),
                     DueChip(po: po),
                     if (po['source'] == 'EXCEL') const DsTag('From Excel'),
+                    if ((intFrom(po['splitNo']) ?? 0) > 0)
+                      Tooltip(
+                        message:
+                            'Part of the PO shipped under its own Acknowledgment No. (copied from the PO when the OCR ACK file was imported)',
+                        child: DsTag('Part shipment #${po['splitNo']}',
+                            color: DsColors.purpleFg, bg: DsColors.purpleBg),
+                      ),
+                    if ('${po['ackNo'] ?? ''}'.isNotEmpty)
+                      DsTag('ACK ${po['ackNo']}',
+                          color: DsColors.navy, bg: DsColors.navySoft),
                     if ('${po['shipmentRef'] ?? ''}'.isNotEmpty)
                       DsTag('S/I ${po['shipmentRef']}',
                           color: DsColors.tealFg, bg: DsColors.tealBg),
@@ -155,12 +165,24 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
           ),
           const SizedBox(width: 12),
           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            const Text('EXPECTED AT FACTORY', style: DsType.eyebrow),
+            const Text('DELIVERY DATE (FACTORY)', style: DsType.eyebrow),
             const SizedBox(height: 2),
-            Text(fmtDate(po['etaDate']),
-                style: DsType.stat(20, color: DsColors.navyDeep)),
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Text(fmtDate(po['deliveryDate'] ?? po['etaDate']),
+                  style: DsType.stat(20, color: DsColors.navyDeep)),
+              if (scope.canEdit && !cancelled)
+                IconButton(
+                  tooltip: 'Change the Delivery date',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.edit_calendar_outlined,
+                      size: 18, color: DsColors.navy),
+                  onPressed: () => _after(editDeliveryDate(context, po)),
+                ),
+            ]),
             Text(
-                'Lead time ${po['leadTimeDays'] ?? '-'} days (${_leadSource(po['leadTimeSource'])})',
+                po['deliveryDate'] == null
+                    ? 'No Delivery date — estimated from the workflow'
+                    : 'Step 7 · Factory good received',
                 style: DsType.metaSm),
           ]),
           const SizedBox(width: 6),
@@ -249,12 +271,13 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
     ]);
   }
 
-  String _leadSource(dynamic s) => switch ('$s') {
-        'MATERIAL' => 'from material master',
-        'SUPPLIER' => 'supplier default',
-        'MANUAL' => 'set by hand',
-        _ => 'section default',
-      };
+  /// Closes the PO and opens the Import page on the OCR ACK / OCR SI upload
+  /// ([kind] is the step's code, which is also the Import page's kind).
+  void _openImport(String kind) {
+    final scope = AppScope.read(context);
+    Navigator.of(context).pop();
+    scope.navigate(AppPage.imports, args: {'kind': kind});
+  }
 
   Widget _progress(Map<String, dynamic> po, AppScope scope) {
     final steps = (po['steps'] as List).cast<Map>();
@@ -268,17 +291,24 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
             last: i == steps.length - 1,
             canAct: scope.canEdit && po['status'] == 'ACTIVE',
             onDone: () => _after(showAdvanceDialog(context, [po])),
+            onImport: _openImport,
+            onEditDate: scope.canEdit && po['status'] != 'CANCELLED'
+                ? () => _after(editDeliveryDate(context, po))
+                : null,
           ),
       ],
     );
     final info =
-        ListView(padding: const EdgeInsets.fromLTRB(8, 8, 20, 20), children: [
+        ListView(padding: const EdgeInsets.fromLTRB(8, 8, 20, 8), children: [
       DsCard(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const DsCardTitle('Details', icon: Icons.info_outline),
-          const SizedBox(height: 10),
+          const SizedBox(height: 4),
           _kv('PO date (N1)', fmtDate(po['documentDate'])),
+          _kv('Delivery date', po['deliveryDate'] == null ? 'Not set' : fmtDate(po['deliveryDate'])),
+          _kv('Shipment (ACK No.)', '${po['ackNo'] ?? '-'}'),
+          if ('${po['ackEtdText'] ?? ''}'.isNotEmpty) _kv('ETD on the ACK', '${po['ackEtdText']}'),
           _kv('Supplier',
               '${po['supplierShort'] ?? po['supplierName'] ?? '-'}'),
           _kv('Shipping mode', shipModeLabel(po['shipMode'])),
@@ -290,7 +320,7 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
                   : '${fmtMoney(po['totalValue'])} ${po['currency'] ?? ''}'),
           _kv('Doc type / plant',
               '${po['docType'] ?? '-'} / ${po['plant'] ?? '-'}'),
-          _kv('Shipment / S/I ref.', '${po['shipmentRef'] ?? '-'}'),
+          _kv('S/I No.', '${po['shipmentRef'] ?? '-'}'),
           _kv('Added by',
               '${po['createdByName'] ?? '-'} · ${fmtDateTime(po['createdAt'])}'),
           if (po['updatedAt'] != null)
@@ -305,16 +335,97 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
           ],
         ]),
       ),
+      const SizedBox(height: 10),
+      _etdEta(po),
     ]);
-    if (!wide) return timeline;
+    if (!wide) {
+      return ListView(padding: const EdgeInsets.only(bottom: 20), children: [
+        Padding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 0), child: _etdEta(po)),
+        for (var i = 0; i < steps.length; i++)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: _TimelineRow(
+              step: Map<String, dynamic>.from(steps[i]),
+              last: i == steps.length - 1,
+              canAct: scope.canEdit && po['status'] == 'ACTIVE',
+              onDone: () => _after(showAdvanceDialog(context, [po])),
+              onImport: _openImport,
+              onEditDate: scope.canEdit && po['status'] != 'CANCELLED'
+                  ? () => _after(editDeliveryDate(context, po))
+                  : null,
+            ),
+          ),
+      ]);
+    }
     return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Expanded(flex: 3, child: timeline),
       Expanded(flex: 2, child: info),
     ]);
   }
 
+  /// ETD / ETA from the OCR SI file, large: what Purchase looks for first.
+  /// They do not move step 7 (that is the Delivery date).
+  Widget _etdEta(Map<String, dynamic> po) {
+    final etd = po['etdDate'];
+    final eta = po['siEtaDate'];
+    Widget cell(String label, dynamic iso, IconData icon) => Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Icon(icon, size: 15, color: Colors.white.withValues(alpha: .85)),
+              const SizedBox(width: 6),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 11,
+                      letterSpacing: .8,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white.withValues(alpha: .8))),
+            ]),
+            const SizedBox(height: 4),
+            Text(iso == null ? '—' : fmtDate(iso),
+                style: DsType.stat(20, color: Colors.white)),
+            if (iso != null)
+              Text(intl.DateFormat('EEEE').format(DateTime.parse('$iso')),
+                  style: TextStyle(fontSize: 11.5, color: Colors.white.withValues(alpha: .75))),
+          ]),
+        );
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xff0f766e), Color(0xff115e59), Color(0xff134e4a)],
+        ),
+        boxShadow: const [BoxShadow(color: Color(0x33134e4a), blurRadius: 18, offset: Offset(0, 8))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.directions_boat_filled_outlined, size: 18, color: Colors.white),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+                '${po['shipmentRef'] ?? ''}'.isEmpty ? 'Shipping (OCR SI)' : 'Shipping · S/I ${po['shipmentRef']}',
+                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Colors.white)),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        if (etd == null && eta == null)
+          Text('ETD and ETA arrive with the OCR SI file.',
+              style: TextStyle(fontSize: 12.5, color: Colors.white.withValues(alpha: .85)))
+        else
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            cell('ETD', etd, Icons.flight_takeoff),
+            Container(width: 1, height: 46, color: Colors.white.withValues(alpha: .25)),
+            const SizedBox(width: 16),
+            cell('ETA', eta, Icons.flight_land),
+          ]),
+      ]),
+    );
+  }
+
   Widget _kv(String k, String v) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 5),
+        padding: const EdgeInsets.symmetric(vertical: 3),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           SizedBox(width: 130, child: Text(k, style: DsType.meta)),
           Expanded(
@@ -357,8 +468,9 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
                 ('Vendor material', null),
                 ('Type', 80.0),
                 ('Qty', 90.0),
+                ('ACK / S/I qty', 100.0),
                 ('Price', 110.0),
-                ('Lead time', 74.0),
+                ('', 74.0),
                 ('', 30.0)
               ])
                 h.$2 == null
@@ -384,6 +496,24 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
                 cell('${i['vendorMaterial'] ?? '-'}', null),
                 cell('${i['materialType'] ?? '-'}', 80),
                 cell('${fmtNum(i['orderQty'])} ${i['orderUnit'] ?? ''}', 90),
+                SizedBox(
+                  width: 100,
+                  child: i['ackQty'] == null && i['siQty'] == null
+                      ? const Text('-', style: DsType.meta)
+                      : Tooltip(
+                          message: 'Quantity in this shipment per the OCR ACK / OCR SI file',
+                          child: Text(
+                              '${i['ackQty'] == null ? '-' : fmtNum(i['ackQty'])} / ${i['siQty'] == null ? '-' : fmtNum(i['siQty'])}',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: i['ackQty'] != null &&
+                                          i['orderQty'] != null &&
+                                          (i['ackQty'] as num) < (i['orderQty'] as num)
+                                      ? DsColors.amberFg
+                                      : DsColors.heading)),
+                        ),
+                ),
                 cell(
                     i['netPrice'] == null
                         ? '-'
@@ -396,14 +526,13 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
                           message: 'Marked deleted in SAP — not counted',
                           child: DsTag('deleted',
                               color: DsColors.redFg, bg: DsColors.redBg))
-                      : i['leadTimeDays'] == null
+                      : i['materialId'] == null
                           ? const Tooltip(
                               message: 'Not in the material master',
                               child: DsTag('n/a',
                                   color: DsColors.amberFg,
                                   bg: DsColors.amberBg))
-                          : Text('${i['leadTimeDays']} d',
-                              style: mono(size: 12, weight: FontWeight.w600)),
+                          : const SizedBox.shrink(),
                 ),
                 SizedBox(
                   width: 30,
@@ -489,6 +618,8 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
         'CREATED' => Icons.add_circle_outline,
         'STEP_DONE' => Icons.check_circle_outline,
         'STEP_UNDONE' => Icons.undo,
+        'SPLIT_CREATED' => Icons.call_split,
+        'ACK_LINKED' => Icons.link,
         'CANCELLED' => Icons.block,
         'REOPENED' => Icons.restore,
         _ => Icons.edit_outlined,
@@ -505,9 +636,13 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
   String _historyTitle(Map<String, dynamic> h) {
     final d = (h['detail'] as Map?) ?? const {};
     return switch ('${h['action']}') {
-      'CREATED' =>
-        'PO added${d['source'] == 'EXCEL' ? ' from Excel' : ' by hand'} (${d['items'] ?? 0} lines)',
-      'STEP_DONE' => 'Step ${h['stepNo']} done · ${d['stepName'] ?? ''}',
+      'CREATED' => d['source'] == 'OCR_ACK'
+          ? 'Part shipment made from ${d['splitFrom'] ?? 'the PO'} for ACK ${d['ackNo'] ?? ''} (${d['items'] ?? 0} lines)'
+          : 'PO added${d['source'] == 'EXCEL' ? ' from Excel' : ' by hand'} (${d['items'] ?? 0} lines)',
+      'STEP_DONE' =>
+        'Step ${h['stepNo']} done · ${d['stepName'] ?? ''}${d['source'] == 'OCR_ACK' ? ' (OCR ACK file)' : d['source'] == 'OCR_SI' ? ' (OCR SI file)' : ''}',
+      'SPLIT_CREATED' => 'Part shipment created for ACK ${d['ackNo'] ?? ''}',
+      'ACK_LINKED' => 'Acknowledgment No. ${d['referenceNo'] ?? ''} linked from the OCR ACK file',
       'STEP_UNDONE' => 'Step ${h['stepNo']} undone · ${d['stepName'] ?? ''}',
       'CANCELLED' => 'PO cancelled',
       'REOPENED' => 'PO reopened',
@@ -530,12 +665,19 @@ class _PoDetailDialogState extends State<PoDetailDialog> {
           if (d['dueDate'] != null)
             'due ${fmtDate(d['dueDate'])}${late > 0 ? ' ($late d late)' : ' (on time)'}',
           if ('${d['referenceNo'] ?? ''}'.isNotEmpty) 'ref ${d['referenceNo']}',
+          if (d['etd'] != null) 'ETD ${fmtDate(d['etd'])}',
+          if (d['eta'] != null) 'ETA ${fmtDate(d['eta'])}',
           if ('${d['remark'] ?? ''}'.isNotEmpty) '"${d['remark']}"',
         ].join(' · ');
       case 'CANCELLED':
         return '${d['reason'] ?? ''}';
       case 'CREATED':
-        return 'PO date ${fmtDate(d['documentDate'])} · lead time ${d['leadTimeDays'] ?? '-'} days';
+        return [
+          'PO date ${fmtDate(d['documentDate'])}',
+          if (d['deliveryDate'] != null) 'Delivery date ${fmtDate(d['deliveryDate'])}',
+        ].join(' · ');
+      case 'SPLIT_CREATED':
+        return ((d['lines'] as List?) ?? const []).map((l) => 'line $l').join(' · ');
       case 'EDITED':
         return d.entries.map((e) {
           final v = e.value;
@@ -573,17 +715,26 @@ class _TimelineRow extends StatelessWidget {
       {required this.step,
       required this.last,
       required this.canAct,
-      required this.onDone});
+      required this.onDone,
+      this.onImport,
+      this.onEditDate});
   final Map<String, dynamic> step;
   final bool last;
   final bool canAct;
   final VoidCallback onDone;
+
+  /// OCR ACK / OCR SI steps: jump to the Import page with that file kind.
+  final ValueChanged<String>? onImport;
+
+  /// The arrival step's date is the PO's Delivery date: editable any time.
+  final VoidCallback? onEditDate;
 
   @override
   Widget build(BuildContext context) {
     final state = '${step['state']}';
     final done = state == 'done';
     final current = state == 'current';
+    final isOcr = step['code'] == 'ACK' || step['code'] == 'SI';
     final late = intFrom(step['lateDays']) ?? 0;
     final color = done
         ? (late > 0 ? DsColors.amberFg : DsColors.greenFg)
@@ -670,7 +821,7 @@ class _TimelineRow extends StatelessWidget {
                           ],
                           if (step['isArrival'] == true) ...[
                             const SizedBox(width: 6),
-                            const DsTag('ETA',
+                            const DsTag('Delivery date',
                                 color: DsColors.tealFg, bg: DsColors.tealBg),
                           ],
                         ]),
@@ -718,12 +869,39 @@ class _TimelineRow extends StatelessWidget {
                           ),
                       ]),
                 ),
+                if (step['isArrival'] == true && onEditDate != null)
+                  Padding(
+                    padding: EdgeInsets.only(right: current && canAct ? 8 : 0),
+                    child: DsOutlineButton(
+                        label: 'Change date',
+                        icon: Icons.edit_calendar_outlined,
+                        height: 34,
+                        onPressed: onEditDate),
+                  ),
+                if (isOcr && current && canAct && onImport != null)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Tooltip(
+                      message:
+                          'Upload the ${step['code'] == 'ACK' ? 'OCR ACK' : 'OCR SI'} file on the Import page',
+                      child: DsOutlineButton(
+                          label: 'Import',
+                          icon: Icons.upload_file_outlined,
+                          height: 34,
+                          onPressed: () => onImport!('${step['code']}')),
+                    ),
+                  ),
                 if (current && canAct)
-                  DsPrimaryButton(
-                      label: 'Mark done',
-                      icon: Icons.check,
-                      height: 34,
-                      onPressed: onDone),
+                  Tooltip(
+                    message: step['code'] == 'ACK' || step['code'] == 'SI'
+                        ? 'Normally closed by uploading the ${step['code'] == 'ACK' ? 'OCR ACK' : 'OCR SI'} file on the Import page — use this when the file has a problem'
+                        : '',
+                    child: DsPrimaryButton(
+                        label: 'Mark done',
+                        icon: Icons.check,
+                        height: 34,
+                        onPressed: onDone),
+                  ),
               ]),
             ),
           ),

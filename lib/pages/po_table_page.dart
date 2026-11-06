@@ -141,10 +141,7 @@ class _PoTablePageState extends State<PoTablePage> {
     _debounce = Timer(const Duration(milliseconds: 350), _filterChanged);
   }
 
-  Future<void> _import() async {
-    final changed = await showPoImportDialog(context);
-    if (changed) unawaited(load(quiet: true));
-  }
+  void _import() => AppScope.read(context).navigate(AppPage.imports);
 
   Future<void> _create() async {
     final id = await showPoCreateDialog(context);
@@ -291,7 +288,7 @@ class _PoTablePageState extends State<PoTablePage> {
                       items: const [
                         SearchableDropdownItem(
                             value: 'due', label: 'Sort: next due date'),
-                        SearchableDropdownItem(value: 'eta', label: 'Sort: ETA'),
+                        SearchableDropdownItem(value: 'eta', label: 'Sort: Delivery date'),
                         SearchableDropdownItem(
                             value: 'docDate', label: 'Sort: newest PO'),
                         SearchableDropdownItem(
@@ -460,7 +457,7 @@ class _PoTablePageState extends State<PoTablePage> {
   static const _wMode = 78.0;
   static const _wDue = 150.0;
   static const _wEta = 100.0;
-  static const _wAct = 96.0;
+  static const _wAct = 168.0;
 
   Widget _header(AppScope scope) {
     Widget h(String t, double? w, {TextAlign align = TextAlign.left}) {
@@ -484,7 +481,7 @@ class _PoTablePageState extends State<PoTablePage> {
         const SizedBox(width: 12),
         SizedBox(width: 190, child: Text('PROGRESS', style: DsType.eyebrow)),
         h('Next due', _wDue),
-        h('ETA', _wEta),
+        h('Delivery', _wEta),
         h('', _wAct),
       ]),
     );
@@ -587,7 +584,7 @@ class _PoTablePageState extends State<PoTablePage> {
         DsSkelCol((_) => DsSkel.line(74, height: 11), width: _wEta),
         DsSkelCol(
             (_) => Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                  if (scope.canEdit) DsSkel.circle(34),
+                  if (scope.canEdit) DsSkel.box(116, 32, radius: 16),
                   const SizedBox(width: 14),
                   DsSkel.box(4, 16, radius: 2), // the ⋮ menu
                   const SizedBox(width: 14),
@@ -617,13 +614,20 @@ class _PoTablePageState extends State<PoTablePage> {
               child: Column(
                   mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('${po['poNo']}',
+                    Text(
+                        (intFrom(po['splitNo']) ?? 0) > 0
+                            ? '${po['poNo']} #${po['splitNo']}'
+                            : '${po['poNo']}',
                         style: mono(
                             size: 12.5,
                             weight: FontWeight.w700,
                             color: DsColors.heading)),
-                    if ('${po['shipmentRef'] ?? ''}'.isNotEmpty)
-                      Text('${po['shipmentRef']}',
+                    if ('${po['ackNo'] ?? ''}'.isNotEmpty || '${po['shipmentRef'] ?? ''}'.isNotEmpty)
+                      Text(
+                          [
+                            if ('${po['ackNo'] ?? ''}'.isNotEmpty) 'ACK ${po['ackNo']}',
+                            if ('${po['shipmentRef'] ?? ''}'.isNotEmpty) '${po['shipmentRef']}',
+                          ].join(' · '),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: DsType.metaSm),
@@ -686,27 +690,51 @@ class _PoTablePageState extends State<PoTablePage> {
               width: _wAct,
               child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
                 if (active && scope.canEdit)
-                  Tooltip(
-                    message: 'Mark "${po['currentStepShort']}" done',
-                    child: IconButton.filledTonal(
-                      style: IconButton.styleFrom(
-                          backgroundColor: DsColors.greenBg,
-                          foregroundColor: DsColors.greenFg,
-                          minimumSize: const Size(34, 34)),
-                      icon: const Icon(Icons.check, size: 18),
-                      onPressed: () async {
-                        if (await showAdvanceDialog(context, [po])) {
-                          unawaited(load(quiet: true));
-                        }
-                      },
-                    ),
-                  ),
+                  Flexible(child: _stepAction(scope, po)),
                 _rowMenu(scope, po),
               ]),
             ),
           ]),
         ),
       ),
+    );
+  }
+
+  /// The file step (OCR ACK / OCR SI) a PO waits at, or null for the steps
+  /// closed by hand.
+  static String? _fileStep(Map<String, dynamic> po) {
+    final no = intFrom(po['currentStep']) ?? 0;
+    final code = '${WorkflowCache.stepOf(no)?['code'] ?? (no == 2 ? 'ACK' : no == 3 ? 'SI' : '')}';
+    return code == 'ACK' || code == 'SI' ? code : null;
+  }
+
+  Future<void> _markDone(Map<String, dynamic> po) async {
+    if (await showAdvanceDialog(context, [po])) unawaited(load(quiet: true));
+  }
+
+  /// The row's next move: steps 2-3 go to the Import page (the OCR file
+  /// closes them), steps 4-7 open "Mark done" for the step the PO waits at.
+  Widget _stepAction(AppScope scope, Map<String, dynamic> po) {
+    final no = intFrom(po['currentStep']) ?? 0;
+    final file = _fileStep(po);
+    if (file != null) {
+      final name = file == 'ACK' ? 'OCR ACK' : 'OCR SI';
+      return _StepActionButton(
+        label: 'Import',
+        icon: Icons.upload_file_outlined,
+        fg: DsColors.purpleFg,
+        bg: DsColors.purpleBg,
+        tooltip: 'Step $no is closed by the $name file — open the Import page',
+        onTap: () => scope.navigate(AppPage.imports, args: {'kind': file}),
+      );
+    }
+    return _StepActionButton(
+      label: '${po['currentStepShort'] ?? 'Mark done'}',
+      icon: Icons.check_rounded,
+      fg: DsColors.greenFg,
+      bg: DsColors.greenBg,
+      tooltip: 'Mark step $no "${po['currentStepName'] ?? po['currentStepShort']}" done',
+      onTap: () => _markDone(po),
     );
   }
 
@@ -722,6 +750,8 @@ class _PoTablePageState extends State<PoTablePage> {
         switch (v) {
           case 'open':
             await scope.openPo(intFrom(po['id'])!);
+          case 'done':
+            await _markDone(po);
           case 'edit':
             changed = await editPoDialog(context, po);
           case 'undo':
@@ -743,6 +773,15 @@ class _PoTablePageState extends State<PoTablePage> {
                 dense: true,
                 leading: Icon(Icons.open_in_new, size: 18),
                 title: Text('Open details'))),
+        // Steps 2-3 normally close by importing the OCR file; by hand only
+        // when the file has a problem.
+        if (scope.canEdit && active && _fileStep(po) != null)
+          const PopupMenuItem(
+              value: 'done',
+              child: ListTile(
+                  dense: true,
+                  leading: Icon(Icons.check, size: 18),
+                  title: Text('Mark done by hand'))),
         if (scope.canEdit && !cancelled)
           const PopupMenuItem(
               value: 'edit',
@@ -780,6 +819,80 @@ class _PoTablePageState extends State<PoTablePage> {
                       size: 18, color: DsColors.redFg),
                   title: Text('Delete permanently'))),
       ],
+    );
+  }
+}
+
+/// A row's step button: the step number in a disc, what to do, and an icon —
+/// one fixed width so the column lines up from row to row.
+class _StepActionButton extends StatefulWidget {
+  const _StepActionButton({
+    required this.label,
+    required this.icon,
+    required this.fg,
+    required this.bg,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color fg;
+  final Color bg;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  State<_StepActionButton> createState() => _StepActionButtonState();
+}
+
+class _StepActionButtonState extends State<_StepActionButton> {
+  bool hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = widget.fg;
+    final bg = hover ? Color.lerp(widget.bg, fg, .12)! : widget.bg;
+    return Tooltip(
+      message: widget.tooltip,
+      waitDuration: const Duration(milliseconds: 400),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => hover = true),
+        onExit: (_) => setState(() => hover = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            width: 116,
+            height: 32,
+            padding: const EdgeInsets.only(left: 12, right: 10),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: fg.withValues(alpha: hover ? .45 : .22)),
+            ),
+            child: Row(children: [
+              // A long step name gets a smaller font instead of "…".
+              Expanded(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(widget.label,
+                      maxLines: 1,
+                      style: TextStyle(
+                          color: fg,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          height: 1.1)),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(widget.icon, size: 15, color: fg),
+            ]),
+          ),
+        ),
+      ),
     );
   }
 }

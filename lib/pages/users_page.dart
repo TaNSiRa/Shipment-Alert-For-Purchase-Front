@@ -338,7 +338,8 @@ class _UsersPageState extends State<UsersPage> {
                     child: Row(children: [
                       // Switching your own account off is a lockout, not an
                       // edit — the server refuses it too.
-                      Switch(
+                      DsAccessSwitch(
+                          semanticLabel: 'Active',
                           value: isActive,
                           onChanged: self ? null : (v) => setState(() => isActive = v)),
                       const SizedBox(width: 8),

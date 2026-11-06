@@ -213,6 +213,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 switch (tab) {
                   1 => _remindersCard(),
                   2 => _securityTab(),
+                  3 => _appearanceCard(),
                   _ => _editProfileCard(),
                 },
               ],
@@ -501,11 +502,12 @@ class _ProfilePageState extends State<ProfilePage> {
 
   // The sliding segmented control: the selection travels between tabs.
   Widget _tabBar() {
-    const labels = ['Profile', 'Reminders', 'Security'];
+    const labels = ['Profile', 'Reminders', 'Security', 'Appearance'];
     const icons = [
       Icons.person_outline,
       Icons.notifications_none,
       Icons.lock_outline,
+      Icons.palette_outlined,
     ];
     return DsCard(
       child: Align(
@@ -565,6 +567,10 @@ class _ProfilePageState extends State<ProfilePage> {
       ]),
     );
   }
+
+  // ── Appearance tab ─────────────────────────────────────────────────────────
+
+  Widget _appearanceCard() => const AppearanceSettings();
 
   // ── Security tab ───────────────────────────────────────────────────────────
 
@@ -1431,7 +1437,7 @@ class _SwitchRow extends StatelessWidget {
             ]),
           ),
           const SizedBox(width: 12),
-          Switch(value: on, onChanged: onChanged, activeThumbColor: DsColors.navy),
+          ExcludeSemantics(child: DsBellSwitch(value: on, onChanged: onChanged)),
         ]),
       ),
     );

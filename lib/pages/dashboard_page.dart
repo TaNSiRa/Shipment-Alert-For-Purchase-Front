@@ -11,6 +11,17 @@ class _DashboardPageState extends State<DashboardPage> {
   String? error;
   int _tick = -1;
 
+  // Cards with their own pickers keep their own data, reloaded alone.
+  int? trendYear;
+  List<Map>? trend;
+  int? modesYear;
+  List<Map>? modesByMonth;
+  bool supplierByMonth = false;
+  int? supplierYear;
+  int supplierMonth = DateTime.now().month;
+  bool supplierByMaterial = false;
+  List<Map>? suppliers;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -28,11 +39,114 @@ class _DashboardPageState extends State<DashboardPage> {
         setState(() {
           data = r;
           error = null;
+          trendYear ??= intFrom(r['trendYear']);
+          modesYear ??= intFrom(r['modesYear']);
+          supplierYear ??= intFrom('${r['supplierPeriod'] ?? ''}'.split('-').first);
         });
+        // A refresh keeps the year / period each card is showing.
+        if (trendYear == intFrom(r['trendYear'])) {
+          setState(() => trend = (r['trend'] as List).cast<Map>());
+        } else {
+          unawaited(loadTrend(trendYear!));
+        }
+        if (modesYear == intFrom(r['modesYear'])) {
+          setState(() => modesByMonth = (r['modesByMonth'] as List).cast<Map>());
+        } else {
+          unawaited(loadModes(modesYear!));
+        }
+        if (!supplierByMonth && '$supplierYear' == '${r['supplierPeriod']}') {
+          setState(() => suppliers = (r['bySupplier'] as List).cast<Map>());
+        } else {
+          unawaited(loadSuppliers());
+        }
       }
     } on ApiException catch (e) {
       if (mounted) setState(() => error = friendlyError(e.message));
     }
+  }
+
+  Future<void> loadTrend(int year) async {
+    setState(() => trendYear = year);
+    try {
+      final r = await AppScope.read(context).api.getJson('/reports/dashboard/trend?year=$year');
+      if (mounted && trendYear == year) setState(() => trend = (r['trend'] as List).cast<Map>());
+    } on ApiException catch (e) {
+      if (mounted) AppToast.error(context, friendlyError(e.message));
+    }
+  }
+
+  Future<void> loadModes(int year) async {
+    setState(() => modesYear = year);
+    try {
+      final r = await AppScope.read(context).api.getJson('/reports/dashboard/modes?year=$year');
+      if (mounted && modesYear == year) setState(() => modesByMonth = (r['months'] as List).cast<Map>());
+    } on ApiException catch (e) {
+      if (mounted) AppToast.error(context, friendlyError(e.message));
+    }
+  }
+
+  String get _supplierPeriod {
+    final y = supplierYear ?? DateTime.now().year;
+    return supplierByMonth ? '$y-${'$supplierMonth'.padLeft(2, '0')}' : '$y';
+  }
+
+  Future<void> loadSuppliers() async {
+    final period = _supplierPeriod;
+    try {
+      final r = await AppScope.read(context).api.getJson('/reports/dashboard/suppliers?period=$period');
+      if (mounted && _supplierPeriod == period) setState(() => suppliers = (r['suppliers'] as List).cast<Map>());
+    } on ApiException catch (e) {
+      if (mounted) AppToast.error(context, friendlyError(e.message));
+    }
+  }
+
+  /// The years one card has data for (newest first), as the server lists
+  /// them: 'trend', 'modes' or 'suppliers'. Never empty.
+  List<int> _years(String card) {
+    final all = data?['years'];
+    final list = all is Map ? (all[card] as List? ?? const []) : const [];
+    final ys = list.map((e) => intFrom(e) ?? 0).where((y) => y > 0).toList();
+    return ys.isEmpty ? [DateTime.now().year] : ys;
+  }
+
+  /// A compact "2026 ▾" picker for a card's title row.
+  Widget _yearPicker(String card, int? value, ValueChanged<int> onPick) {
+    return PopupMenuButton<int>(
+      tooltip: 'Choose the year',
+      onSelected: onPick,
+      itemBuilder: (_) => [for (final y in _years(card)) PopupMenuItem(value: y, child: Text('$y'))],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: DsColors.subtle,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: DsColors.cardBorder),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.calendar_today_outlined, size: 14, color: DsColors.navy),
+          const SizedBox(width: 6),
+          Text('${value ?? DateTime.now().year}',
+              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: DsColors.heading)),
+          const Icon(Icons.arrow_drop_down, size: 18, color: DsColors.icon),
+        ]),
+      ),
+    );
+  }
+
+  Widget _segment(List<String> labels, int selected, ValueChanged<int> onSelect) {
+    return DsSegmented(
+      selected: selected,
+      length: labels.length,
+      itemBuilder: (context, i, t) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+        child: Text(labels[i],
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Color.lerp(DsColors.muted, DsColors.navyDeep, t))),
+      ),
+      onSelect: onSelect,
+    );
   }
 
   @override
@@ -76,14 +190,11 @@ class _DashboardPageState extends State<DashboardPage> {
         ]),
       ),
       const SizedBox(height: 16),
-      DsRise(
-        index: 4,
-        child: _grid(cols, [
-          _trend((d['trend'] as List).cast<Map>()),
-          _modes(Map<String, dynamic>.from(d['modes'] as Map)),
-          _suppliers(scope, (d['bySupplier'] as List).cast<Map>()),
-        ]),
-      ),
+      DsRise(index: 4, child: _trend(trend)),
+      const SizedBox(height: 16),
+      DsRise(index: 5, child: _modes(modesByMonth)),
+      const SizedBox(height: 16),
+      DsRise(index: 6, child: _suppliers(scope, suppliers)),
     ]);
   }
 
@@ -111,7 +222,11 @@ class _DashboardPageState extends State<DashboardPage> {
             onAll: () => scope.navigate(AppPage.pos, args: {'sort': 'eta'})),
       ]),
       const SizedBox(height: 16),
-      _grid(cols, [_trend(null), _modes(null), _suppliers(scope, null)]),
+      _trend(null),
+      const SizedBox(height: 16),
+      _modes(null),
+      const SizedBox(height: 16),
+      _suppliers(scope, null),
     ]);
   }
 
@@ -203,8 +318,8 @@ class _DashboardPageState extends State<DashboardPage> {
               ] else ...[
                 Text(
                   overdue > 0
-                      ? '${plural(intFrom(c['active']) ?? 0, 'shipment')} open · $overdue need follow-up today.'
-                      : '${plural(intFrom(c['active']) ?? 0, 'shipment')} open · everything is on track.',
+                      ? '${plural(intFrom(c['active']) ?? 0, 'PO')} open · $overdue need follow-up today.'
+                      : '${plural(intFrom(c['active']) ?? 0, 'PO')} open · everything is on track.',
                   style: TextStyle(
                       color: Colors.white.withValues(alpha: .9),
                       fontSize: 13.5),
@@ -223,11 +338,9 @@ class _DashboardPageState extends State<DashboardPage> {
               style: FilledButton.styleFrom(
                   backgroundColor: Colors.white,
                   foregroundColor: DsColors.navyDeep),
-              onPressed: () async {
-                if (await showPoImportDialog(context)) unawaited(load());
-              },
+              onPressed: () => scope.navigate(AppPage.imports),
               icon: const Icon(Icons.upload_file, size: 18),
-              label: const Text('Import Excel'),
+              label: const Text('Import'),
             ),
             const SizedBox(width: 10),
           ],
@@ -261,7 +374,7 @@ class _DashboardPageState extends State<DashboardPage> {
         .fold<int>(0, (a, s) => a + (intFrom(s['count']) ?? 0));
     return DsCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        DsCardTitle('Shipment pipeline — where the open POs are waiting',
+        DsCardTitle('Shipment pipeline — where the open shipments are waiting',
             icon: Icons.route_outlined,
             trailing: TextButton(
                 onPressed: () => scope.navigate(AppPage.roadmap),
@@ -299,14 +412,14 @@ class _DashboardPageState extends State<DashboardPage> {
           ? DsColors.redFg
           : board3dPalette[i % board3dPalette.length],
       number: '${s['stepNo']}',
-      top: plural(count, 'PO'),
+      top: plural(count, 'shipment'),
       pills: [
         if (overdue > 0) ('$overdue OVERDUE', DsColors.redFg),
         if (overdue == 0 && soon > 0) ('$soon DUE SOON', DsColors.amberFg),
       ],
       lines: [
         if (count > 0 && total > 0)
-          '${(count * 100 / total).round()}% of open POs'
+          '${(count * 100 / total).round()}% · ${plural(intFrom(s['poCount']) ?? 0, 'PO')}'
         else
           'nothing waiting',
       ],
@@ -568,30 +681,39 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _trend(List<Map>? trend) {
+    final year = trendYear ?? DateTime.now().year;
     return DsCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const DsCardTitle('Last 6 months — planned vs arrived',
-            icon: Icons.bar_chart),
+        DsCardTitle('Planned vs arrived by month — $year',
+            icon: Icons.bar_chart,
+            trailing: _yearPicker('trend', trendYear, (y) => unawaited(loadTrend(y)))),
         const SizedBox(height: 12),
         if (trend == null)
           _trendGhost()
+        else if (trend.every((t) =>
+            (intFrom(t['planned']) ?? 0) == 0 &&
+            (intFrom(t['plannedOnTime']) ?? 0) == 0 &&
+            (intFrom(t['plannedLate']) ?? 0) == 0))
+          const Padding(
+              padding: EdgeInsets.all(20),
+              child: Text('Nothing planned or arrived in this year', style: DsType.meta))
         else
           // Per month, one set of POs: those PLANNED to reach the factory that
-          // month (left, the target from the PO date) and how many of them have
+          // month (left, step 7's Delivery date) and how many of them have
           // arrived (right), on time or late. The empty height between the two
           // is what has not arrived yet.
           ExtrudedBarChart(
+            key: ValueKey('trend-${trend.first['month']}'),
+            height: 240,
             labels: [
               for (final t in trend)
-                intl.DateFormat('MMM')
-                    .format(DateTime.parse('${t['month']}-01'))
+                intl.DateFormat('MMM').format(DateTime.parse('${t['month']}-01'))
             ],
             tooltipTitles: [
               for (final t in trend)
-                intl.DateFormat('MMM yyyy')
-                    .format(DateTime.parse('${t['month']}-01'))
+                intl.DateFormat('MMM yyyy').format(DateTime.parse('${t['month']}-01'))
             ],
-            currentIndex: trend.isEmpty ? null : trend.length - 1,
+            currentIndex: year == DateTime.now().year ? DateTime.now().month - 1 : null,
             series: [
               BarSeries('Planned', [
                 BarSegment('Planned to arrive', DsColors.navy,
@@ -601,8 +723,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   'Arrived',
                   [
                     for (final t in trend)
-                      (intFrom(t['plannedOnTime']) ?? 0) +
-                          (intFrom(t['plannedLate']) ?? 0)
+                      (intFrom(t['plannedOnTime']) ?? 0) + (intFrom(t['plannedLate']) ?? 0)
                   ]
                 ),
                 (
@@ -623,10 +744,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 BarSegment('Arrived late', const Color(0xffe08a80),
                     [for (final t in trend) intFrom(t['plannedLate']) ?? 0]),
               ], notes: [
-                (
-                  'Planned',
-                  [for (final t in trend) intFrom(t['planned']) ?? 0]
-                ),
+                ('Planned', [for (final t in trend) intFrom(t['planned']) ?? 0]),
               ]),
             ],
           ),
@@ -634,11 +752,11 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  /// [ExtrudedBarChart], ghosted: its legend, six month groups of a planned
-  /// and an arrived bar on the baseline, and the month labels.
-  Widget _trendGhost() {
-    const planned = <double>[96, 128, 84, 146, 112, 152];
-    const arrived = [.82, .7, .9, .64, .5, .28];
+  /// [ExtrudedBarChart], ghosted: its legend, twelve month groups of a
+  /// planned and an arrived bar on the baseline, and the month labels.
+  Widget _trendGhost({bool single = false}) {
+    const planned = <double>[96, 128, 84, 146, 112, 152, 120, 90, 134, 104, 142, 116];
+    const arrived = [.82, .7, .9, .64, .5, .28, .6, .75, .4, .55, .3, .2];
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Wrap(spacing: 16, runSpacing: 4, children: [
         for (final w in const <double>[104, 88, 76])
@@ -650,7 +768,7 @@ class _DashboardPageState extends State<DashboardPage> {
       ]),
       const SizedBox(height: 12),
       SizedBox(
-        height: 210,
+        height: 240,
         child: Column(children: [
           Expanded(
             child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
@@ -660,9 +778,11 @@ class _DashboardPageState extends State<DashboardPage> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        DsSkel.box(20, planned[g], radius: 4),
-                        const SizedBox(width: 6),
-                        DsSkel.box(20, planned[g] * arrived[g], radius: 4),
+                        DsSkel.box(18, planned[g], radius: 4),
+                        if (!single) ...[
+                          const SizedBox(width: 6),
+                          DsSkel.box(18, planned[g] * arrived[g], radius: 4),
+                        ],
                       ]),
                 ),
             ]),
@@ -678,97 +798,119 @@ class _DashboardPageState extends State<DashboardPage> {
     ]);
   }
 
-  Widget _modes(Map<String, dynamic>? modes) {
-    const colors = {
-      'SEA': DsColors.blueFg,
-      'AIR': DsColors.purpleFg,
-      'TRUCK': DsColors.amberFg,
-      'COURIER': DsColors.tealFg
-    };
+  static const _modeColors = <String, Color>{
+    'SEA': DsColors.blueFg,
+    'AIR': DsColors.purpleFg,
+    'COURIER': DsColors.tealFg,
+    'TRUCK': DsColors.amberFg,
+    'UNKNOWN': DsColors.faint2,
+  };
+
+  Widget _modes(List<Map>? months) {
+    final year = modesYear ?? DateTime.now().year;
+    final hasUnknown = (months ?? const []).any((m) => (intFrom(m['UNKNOWN']) ?? 0) > 0);
+    final empty = months != null &&
+        months.every((m) => _modeColors.keys.every((k) => (intFrom(m[k]) ?? 0) == 0));
     return DsCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const DsCardTitle('Open shipments by mode',
-            icon: Icons.directions_boat_outlined),
-        const SizedBox(height: 8),
-        if (modes == null)
-          SizedBox(height: 236, width: double.infinity, child: _donutGhost())
-        else if (modes.values.every((v) => (intFrom(v) ?? 0) <= 0))
+        DsCardTitle('Shipments by mode — $year',
+            icon: Icons.directions_boat_outlined,
+            trailing: _yearPicker('modes', modesYear, (y) => unawaited(loadModes(y)))),
+        const SizedBox(height: 4),
+        const Text('Shipments (Acknowledgment No.) arriving each month — step 7 date — by shipping mode',
+            style: DsType.metaSm),
+        const SizedBox(height: 10),
+        if (months == null)
+          _trendGhost(single: true)
+        else if (empty)
           const Padding(
               padding: EdgeInsets.all(20),
-              child: Text('No open shipments', style: DsType.meta))
+              child: Text('No shipments arriving in this year', style: DsType.meta))
         else
-          SizedBox(
-            height: 236,
-            width: double.infinity,
-            child: RaisedDonut(
-              caption: 'open',
-              slices: [
-                for (final e in modes.entries)
-                  DonutSlice(
-                    e.key == 'UNKNOWN' ? 'Not set' : shipModeLabel(e.key),
-                    intFrom(e.value) ?? 0,
-                    colors[e.key] ?? DsColors.faint2,
-                  ),
-              ],
-            ),
+          ExtrudedBarChart(
+            key: ValueKey('modes-${months.first['month']}'),
+            height: 240,
+            labels: [
+              for (final m in months)
+                intl.DateFormat('MMM').format(DateTime.parse('${m['month']}-01'))
+            ],
+            tooltipTitles: [
+              for (final m in months)
+                intl.DateFormat('MMM yyyy').format(DateTime.parse('${m['month']}-01'))
+            ],
+            currentIndex: year == DateTime.now().year ? DateTime.now().month - 1 : null,
+            series: [
+              BarSeries('Shipments', [
+                for (final k in const ['SEA', 'AIR', 'COURIER', 'TRUCK', 'UNKNOWN'])
+                  if (k != 'UNKNOWN' || hasUnknown)
+                    BarSegment(k == 'UNKNOWN' ? 'Not set' : shipModeLabel(k), _modeColors[k]!,
+                        [for (final m in months) intFrom(m[k]) ?? 0]),
+              ]),
+            ],
           ),
-      ]),
-    );
-  }
-
-  /// [RaisedDonut], ghosted: the tilted ring, its total in the hole and a
-  /// label on either side where the leader lines end.
-  Widget _donutGhost() {
-    Widget label(CrossAxisAlignment align, double w) =>
-        DsSkel.lines(w, w * .55, align: align);
-    return FittedBox(
-      fit: BoxFit.scaleDown,
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              label(CrossAxisAlignment.end, 54),
-              const SizedBox(height: 40),
-              label(CrossAxisAlignment.end, 42),
-            ]),
-        const SizedBox(width: 18),
-        Stack(alignment: Alignment.center, children: [
-          Container(
-            width: 210,
-            height: 124,
-            decoration: BoxDecoration(
-              borderRadius: const BorderRadius.all(Radius.elliptical(105, 62)),
-              border: Border.all(color: DsColors.line, width: 24),
-            ),
-          ),
-          Column(mainAxisSize: MainAxisSize.min, children: [
-            DsSkel.box(34, 18, radius: 5),
-            const SizedBox(height: 5),
-            DsSkel.line(28, height: 8),
-          ]),
-        ]),
-        const SizedBox(width: 18),
-        Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              label(CrossAxisAlignment.start, 48),
-              const SizedBox(height: 40),
-              label(CrossAxisAlignment.start, 58),
-            ]),
       ]),
     );
   }
 
   Widget _suppliers(AppScope scope, List<Map>? suppliers) {
-    final top = (suppliers ?? const [])
-        .fold<int>(0, (a, s) => max(a, intFrom(s['count']) ?? 0));
+    final key = supplierByMaterial ? 'materials' : 'count';
+    final list = [...(suppliers ?? const <Map>[])]
+      ..sort((a, b) => (intFrom(b[key]) ?? 0).compareTo(intFrom(a[key]) ?? 0));
+    final top = list.take(12).toList();
+    final peak = top.fold<int>(0, (a, s) => max(a, intFrom(s[key]) ?? 0));
+    final monthNames = [for (var m = 1; m <= 12; m++) intl.DateFormat('MMMM').format(DateTime(2000, m))];
+    final period = supplierByMonth
+        ? '${monthNames[supplierMonth - 1]} ${supplierYear ?? DateTime.now().year}'
+        : '${supplierYear ?? DateTime.now().year}';
     return DsCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const DsCardTitle('Open POs by supplier',
+        DsCardTitle(
+            supplierByMaterial ? 'Materials ordered by supplier — $period' : 'POs by supplier — $period',
             icon: Icons.storefront_outlined),
         const SizedBox(height: 10),
+        Wrap(spacing: 10, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          _segment(const ['By PO', 'By material'], supplierByMaterial ? 1 : 0,
+              (i) => setState(() => supplierByMaterial = i == 1)),
+          _segment(const ['Year', 'Month'], supplierByMonth ? 1 : 0, (i) {
+            setState(() => supplierByMonth = i == 1);
+            unawaited(loadSuppliers());
+          }),
+          _yearPicker('suppliers', supplierYear, (y) {
+            setState(() => supplierYear = y);
+            unawaited(loadSuppliers());
+          }),
+          if (supplierByMonth)
+            PopupMenuButton<int>(
+              tooltip: 'Choose the month',
+              onSelected: (m) {
+                setState(() => supplierMonth = m);
+                unawaited(loadSuppliers());
+              },
+              itemBuilder: (_) => [
+                for (var m = 1; m <= 12; m++) PopupMenuItem(value: m, child: Text(monthNames[m - 1]))
+              ],
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: DsColors.subtle,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: DsColors.cardBorder),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(monthNames[supplierMonth - 1],
+                      style: const TextStyle(
+                          fontSize: 12.5, fontWeight: FontWeight.w700, color: DsColors.heading)),
+                  const Icon(Icons.arrow_drop_down, size: 18, color: DsColors.icon),
+                ]),
+              ),
+            ),
+          Text(
+              supplierByMaterial
+                  ? 'Material lines on POs dated in the period (a split PO counts once)'
+                  : 'POs dated in the period, open or done (cancelled left out)',
+              style: DsType.metaSm),
+        ]),
+        const SizedBox(height: 12),
         if (suppliers == null)
           // [HBar], ghosted: name, the track with its bar, the count.
           for (var i = 0; i < 6; i++)
@@ -785,8 +927,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     Container(
                         height: 12,
                         decoration: BoxDecoration(
-                            color: DsColors.track,
-                            borderRadius: BorderRadius.circular(6))),
+                            color: DsColors.track, borderRadius: BorderRadius.circular(6))),
                     FractionallySizedBox(
                         widthFactor: const [.92, .74, .58, .45, .33, .2][i],
                         child: DsSkel.fill(12, radius: 6)),
@@ -796,30 +937,29 @@ class _DashboardPageState extends State<DashboardPage> {
                 SizedBox(
                     width: 30,
                     child: Align(
-                        alignment: Alignment.centerRight,
-                        child: DsSkel.line(14, height: 10))),
+                        alignment: Alignment.centerRight, child: DsSkel.line(14, height: 10))),
               ]),
             )
-        else if (suppliers.isEmpty)
-          const Padding(
-              padding: EdgeInsets.all(20),
-              child: Text('No open POs', style: DsType.meta)),
-        for (final s in suppliers ?? const <Map>[])
+        else if (top.isEmpty)
+          Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text('No POs in $period', style: DsType.meta)),
+        for (final s in top)
           HBar(
             label: '${s['name']}',
-            value: intFrom(s['count']) ?? 0,
-            max: top,
+            value: intFrom(s[key]) ?? 0,
+            max: peak,
             color: (intFrom(s['overdue']) ?? 0) > 0
                 ? DsColors.redFg.withValues(alpha: .75)
-                : DsColors.navy,
+                : supplierByMaterial
+                    ? DsColors.tealFg
+                    : DsColors.navy,
             extra: (intFrom(s['overdue']) ?? 0) > 0
                 ? Tooltip(
-                    message: 'overdue',
-                    child: DsTag('${s['overdue']}',
-                        color: DsColors.redFg, bg: DsColors.redBg))
+                    message: 'POs overdue',
+                    child: DsTag('${s['overdue']}', color: DsColors.redFg, bg: DsColors.redBg))
                 : null,
-            onTap: () => scope.navigate(AppPage.pos,
-                args: {'q': s['supplierCode'] ?? s['name']}),
+            onTap: () => scope.navigate(AppPage.pos, args: {'q': s['supplierCode'] ?? s['name']}),
           ),
       ]),
     );

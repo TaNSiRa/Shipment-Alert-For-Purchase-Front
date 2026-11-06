@@ -568,6 +568,7 @@ class _AppShellState extends State<AppShell> {
     return switch (page) {
       AppPage.dashboard => const DashboardPage(),
       AppPage.pos => PoTablePage(args: pageArgs),
+      AppPage.imports => ImportPage(args: pageArgs),
       AppPage.roadmap => const RoadmapPage(),
       AppPage.calendar => const CalendarPage(),
       AppPage.workflow => const WorkflowPage(),

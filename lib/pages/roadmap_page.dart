@@ -266,7 +266,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
             ]),
           ),
         const Expanded(
-            child: Text('ETA FACTORY',
+            child: Text('DELIVERY',
                 textAlign: TextAlign.right, style: DsType.eyebrow)),
       ]),
     );
@@ -320,7 +320,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
             ),
           ),
         const Expanded(
-            child: Text('ETA FACTORY',
+            child: Text('DELIVERY',
                 textAlign: TextAlign.right, style: DsType.eyebrow)),
       ]),
     );
@@ -377,7 +377,7 @@ class _RoadmapPageState extends State<RoadmapPage> {
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
                       color: DsColors.navyDeep)),
-              Text('${po['leadTimeDays'] ?? '-'} d lead', style: DsType.metaSm),
+              Text(po['deliveryDate'] == null ? 'estimated' : 'delivery date', style: DsType.metaSm),
             ]),
           ),
         ]),

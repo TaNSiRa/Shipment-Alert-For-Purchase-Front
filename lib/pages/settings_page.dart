@@ -353,8 +353,8 @@ class _MailSettingsState extends State<_MailSettings> with _SettingsData {
                   'SMTP is not configured on the server yet (SMTP_HOST / SMTP_FROM in backend/.env). '
                   'Mails are kept in the Mail log until it is.',
             ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
+          DsSwitchTile(
+            style: DsSwitchStyle.bell,
             value: values['mail.enabled'] == true,
             title: const Text('Send emails for this section',
                 style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
@@ -366,8 +366,8 @@ class _MailSettingsState extends State<_MailSettings> with _SettingsData {
                 : (v) => unawaited(
                     saveSettings({'mail.enabled': v}).then((_) => _status())),
           ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
+          DsSwitchTile(
+            style: DsSwitchStyle.bell,
             value: values['mail.monthlyEnabled'] == true,
             title: const Text('Send the monthly report on the last working day',
                 style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
@@ -483,7 +483,8 @@ class _MailSettingsState extends State<_MailSettings> with _SettingsData {
                       child: Align(
                           alignment: Alignment.centerLeft,
                           child: DsTag('${m['roleName'] ?? m['roleCode']}'))),
-                  Switch(
+                  DsBellSwitch(
+                    semanticLabel: 'Daily email for ${m['displayName'] ?? '-'}',
                     value: m['receiveDailyMail'] == true,
                     onChanged: m['hasEmail'] != true ||
                             _toggling.contains(intFrom(m['id']))
@@ -1754,8 +1755,8 @@ class _HolidayDbCardState extends State<_HolidayDbCard> {
               text:
                   'HOLIDAY_SQL_USER / HOLIDAY_SQL_PASSWORD are not set in backend/.env yet.'),
         ],
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
+        DsSwitchTile(
+          style: DsSwitchStyle.sync,
           value: enabled,
           title: const Text('Read holidays from this database',
               style: TextStyle(fontSize: 13)),

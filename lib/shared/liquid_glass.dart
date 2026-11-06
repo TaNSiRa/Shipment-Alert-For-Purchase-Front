@@ -145,6 +145,111 @@ class Lg {
 // THE FIELD — what the glass has to look at
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// The scenes [LiquidField] can bake. Picked on the profile page's
+/// Appearance tab; see [LgScene].
+///
+/// [classic] is the system's own default and stays FIRST, in this list and so
+/// on the picker — whatever else is added, the way back is the first tile.
+enum LgBackdrop {
+  classic('Default', 'The system’s own field — colour pools, light curves and rings', LiquidField.fieldLift),
+  aurora('Aurora silk', 'Pastel aurora crossed by twisting ribbons of fine light', Color(0x1affffff)),
+  contour('Contour', 'Soft gradient drawn over with topographic lines', Color(0x1affffff)),
+  bubbles('Bubbles', 'Floating glass bubbles over a soft haze', Color(0x1fffffff));
+
+  const LgBackdrop(this.label, this.blurb, this.lift);
+
+  final String label;
+  final String blurb;
+
+  /// The white veil laid over the finished scene — how pale the page reads.
+  /// The newer scenes are built lighter to begin with, so they take less.
+  final Color lift;
+}
+
+/// A colour set the patterned scenes can be painted in. [original] — each
+/// scene's own colours — is first and the default, for the same reason as
+/// [LgBackdrop.classic].
+///
+/// [accents] are six saturated colours in a fixed order — main, cool partner,
+/// third, warm partner, light, deep — so every scene can ask for "the main
+/// colour" or "the warm one" and get a sensible answer from any tone. [base]
+/// is three near-white tints for the ground under them.
+enum LgTone {
+  original('Original', null, null),
+  lavender('Lavender', [0xfff2eefe, 0xffefedfd, 0xfff4effc],
+      [0xff8b7cf6, 0xff818cf8, 0xffc084fc, 0xfff0a1d6, 0xffa78bfa, 0xff6d7cf0]),
+  ocean('Ocean', [0xffeaf3fd, 0xffe8f1fc, 0xffe9f6fa],
+      [0xff3b9eea, 0xff22c3d6, 0xff5b7cf0, 0xff38bdf8, 0xff2dd4bf, 0xff3f6fd8]),
+  mint('Mint', [0xffebf8f3, 0xffeaf6f1, 0xffeef9ee],
+      [0xff34c79a, 0xff4cc9c0, 0xff84d65a, 0xff2fb5a5, 0xffa3d977, 0xff1f9e7e]),
+  sunset('Sunset', [0xfffdf2ec, 0xfffcefee, 0xfffdf4e9],
+      [0xfffb923c, 0xfff472b6, 0xfffbbf24, 0xfff87171, 0xfffda4af, 0xffe0762c]),
+  rose('Rose', [0xfffdeff4, 0xfffbedf3, 0xfffcf0f6],
+      [0xfff472b6, 0xffe879f9, 0xfffb7185, 0xfff9a8d4, 0xffc084fc, 0xffdb4b8f]),
+  sky('Sky', [0xffeef6fe, 0xffeef3fe, 0xfff1f8fd],
+      [0xff60a5fa, 0xff93c5fd, 0xff7dd3fc, 0xffa5b4fc, 0xffbae6fd, 0xff3b82f6]),
+  graphite('Graphite', [0xfff1f2f5, 0xffeef0f3, 0xfff2f3f5],
+      [0xff8b93a7, 0xff9aa3b5, 0xff6b7489, 0xffa3abbd, 0xffb4bac8, 0xff5d6578]);
+
+  const LgTone(this.label, this.base, this.accents);
+
+  final String label;
+  final List<int>? base;
+  final List<int>? accents;
+}
+
+/// What is behind the glass: the pattern and its colour tone. Preferences about
+/// the machine in front of you, like [Lg.enabled], so they live in
+/// `localStorage`.
+class LgScene {
+  LgScene._();
+
+  static final ValueNotifier<LgBackdrop> current = ValueNotifier<LgBackdrop>(LgBackdrop.classic);
+  static final ValueNotifier<LgTone> tone = ValueNotifier<LgTone>(LgTone.original);
+
+  /// Everything a bake depends on, so one notifier change re-bakes.
+  static Listenable get changes => Listenable.merge([current, tone]);
+
+  static const String _key = 'psa.backdrop';
+  static const String _toneKey = 'psa.backdropTone';
+
+  /// Reads the remembered choice and starts listening. Call once, before
+  /// `runApp`.
+  static void restore() {
+    try {
+      final store = html.window.localStorage;
+      // A name that is no longer offered (the plain-colour scene, removed
+      // 2026-11-04) matches nothing here and leaves the default in place.
+      for (final s in LgBackdrop.values) {
+        if (s.name == store[_key]) current.value = s;
+      }
+      for (final t in LgTone.values) {
+        if (t.name == store[_toneKey]) tone.value = t;
+      }
+      // Write back what was actually applied, so a stale name is replaced.
+      if (store.containsKey(_key)) store[_key] = current.value.name;
+      if (store.containsKey(_toneKey)) store[_toneKey] = tone.value.name;
+      store.remove('psa.backdropColor');
+    } catch (_) {}
+    changes.addListener(() {
+      try {
+        final store = html.window.localStorage;
+        store[_key] = current.value.name;
+        store[_toneKey] = tone.value.name;
+      } catch (_) {
+        // Private-mode browsers refuse to write; the choice just won't stick.
+      }
+      // Re-bake; [_DsAmbientPainter] repaints when [LiquidField.version] bumps.
+      LiquidField.ensure();
+    });
+  }
+
+  /// Identifies one bake.
+  static String keyFor(LgBackdrop style, LgTone tone) => '${style.name}|${tone.name}';
+
+  static String get currentKey => keyFor(current.value, tone.value);
+}
+
 /// The patterned background the drops sit on, baked once into an image.
 ///
 /// This is not decoration. It is the single thing the whole theme depends on,
@@ -183,6 +288,8 @@ class LiquidField {
   static bool _baking = false;
   // Only meaningful with [Lg.photoField] on: which photo the current bake used.
   static ui.Image? _bakedPhoto;
+  // Which [LgScene.currentKey] the current bake drew.
+  static String? _bakedKey;
 
   /// Bumped when the bake lands, so painters listening to it repaint.
   static final ValueNotifier<int> version = ValueNotifier<int>(0);
@@ -235,9 +342,11 @@ class LiquidField {
   /// unless [Lg.photoField] is on — then again whenever the branch changes.
   static void ensure() {
     final photo = Lg.photoField ? BranchBackdrop.image.value : null;
-    if (_baking || (_image != null && identical(photo, _bakedPhoto))) return;
+    final key = LgScene.currentKey;
+    if (_baking || (_image != null && identical(photo, _bakedPhoto) && key == _bakedKey)) return;
     _baking = true;
     _bakedPhoto = photo;
+    _bakedKey = key;
     final recorder = ui.PictureRecorder();
     _paint(Canvas(recorder), Size(_w.toDouble(), _h.toDouble()), photo);
     unawaited(() async {
@@ -268,6 +377,8 @@ class LiquidField {
         version.value++;
       } finally {
         _baking = false;
+        // The scene was changed again while this one was baking — catch up.
+        if (LgScene.currentKey != _bakedKey) ensure();
       }
     }());
   }
@@ -284,7 +395,6 @@ class LiquidField {
 
   static void _paint(Canvas canvas, Size size, ui.Image? photo) {
     final w = size.width, h = size.height;
-    final rnd = _rng(20260812);
 
     // ── The photo-backed field, kept behind [Lg.photoField]. ──
     //
@@ -310,7 +420,63 @@ class LiquidField {
       return;
     }
 
-    // ── The synthetic field: what ships. ──
+    // ── The synthetic field: whichever scene [LgScene] has picked. ──
+    paintScene(canvas, size, LgScene.current.value);
+  }
+
+  /// Draws [style] cover-fitted across [size] — the bake, and the picker's
+  /// thumbnails, which is why it is public: the tile you click is the same
+  /// picture the page will get, only smaller. [tone] defaults to what
+  /// [LgScene] holds now.
+  static void paintScene(Canvas canvas, Size size, LgBackdrop style, {LgTone? tone}) {
+    final scale = max(size.width / _w, size.height / _h);
+    canvas.save();
+    canvas.clipRect(Offset.zero & size);
+    canvas.translate((size.width - _w * scale) / 2, (size.height - _h * scale) / 2);
+    canvas.scale(scale);
+    canvas.drawPicture(_picture(style, tone ?? LgScene.tone.value));
+    canvas.restore();
+  }
+
+  /// Each scene × tone recorded once, at the bake's own size. Contour in
+  /// particular is a marching-squares pass over the whole field — it should be
+  /// paid for once, not every time a thumbnail repaints.
+  static final Map<String, ui.Picture> _pictures = {};
+
+  static ui.Picture _picture(LgBackdrop style, LgTone tone) =>
+      _pictures[LgScene.keyFor(style, tone)] ??= () {
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        final size = Size(_w.toDouble(), _h.toDouble());
+        switch (style) {
+          case LgBackdrop.classic:
+            _paintClassic(canvas, size, tone);
+          case LgBackdrop.aurora:
+            _paintAurora(canvas, size, tone);
+          case LgBackdrop.contour:
+            _paintContour(canvas, size, tone);
+          case LgBackdrop.bubbles:
+            _paintBubbles(canvas, size, tone);
+        }
+        // See the lightening dial at the end of [_paintClassic].
+        canvas.drawRect(Offset.zero & size, Paint()..color = style.lift);
+        return recorder.endRecording();
+      }();
+
+  /// A scene's colours under [tone]: the tone's own if it has them, otherwise
+  /// the scene's [fallback] — which is what [LgTone.original] means.
+  static List<Color> _accents(LgTone tone, List<int> fallback) =>
+      [for (final v in tone.accents ?? fallback) Color(v)];
+  static List<Color> _base(LgTone tone, List<int> fallback) => [for (final v in tone.base ?? fallback) Color(v)];
+
+  static void _paintClassic(Canvas canvas, Size size, LgTone tone) {
+    final w = size.width, h = size.height;
+    final rnd = _rng(20260812);
+    final base = _base(tone, const [0xfff0f2fd, 0xffe9edfa]);
+    final accents =
+        _accents(tone, const [0xff7f8cff, 0xffc77bff, 0xff46cfc4, 0xffff89b0, 0xffffc069, 0xff8f9dff]);
+
+    // ── The original synthetic field. ──
     //
     // A working day is spent on these pages, and a picture of the plant behind
     // every table is a lot of picture to look at. This is the reference's own
@@ -323,11 +489,11 @@ class LiquidField {
     canvas.drawRect(
       Offset.zero & size,
       Paint()
-        ..shader = const LinearGradient(
+        ..shader = LinearGradient(
           // The base, lifted 2026-08-21 from e4e8fa→d8def5. This pair is the
           // BLUE the user was seeing: it covers the whole window, so it sets the
           // page's cast on its own before a single blob is drawn.
-          colors: [Color(0xfff0f2fd), Color(0xffe9edfa)],
+          colors: base,
         ).createShader(Rect.fromLTWH(0, 0, w * .3, h)),
     );
 
@@ -339,18 +505,12 @@ class LiquidField {
       [.42, .86, .55],
       [.66, .98, .45],
     ];
-    const blobs = [
-      [0xff7f8cff, .55],
-      [0xffc77bff, .50],
-      [0xff46cfc4, .42],
-      [0xffff89b0, .46],
-      [0xffffc069, .36],
-      [0xff8f9dff, .44],
-    ];
-    for (var i = 0; i < blobs.length; i++) {
+    // The six pools' colours come from [accents] (the original six unless a
+    // tone is picked); their weights stay the composition's own.
+    const blobAlpha = [.55, .50, .42, .46, .36, .44];
+    for (var i = 0; i < blobAlpha.length; i++) {
       final x = spots[i][0] * w, y = spots[i][1] * h, r = spots[i][2] * w * .72;
-      final color =
-          Color(blobs[i][0] as int).withValues(alpha: (blobs[i][1] as double) * blobStrength);
+      final color = accents[i].withValues(alpha: blobAlpha[i] * blobStrength);
       final rect = Rect.fromCircle(center: Offset(x, y), radius: r);
       canvas.drawCircle(
         Offset(x, y),
@@ -432,7 +592,420 @@ class LiquidField {
     // It goes on the BAKED image, so the drops bend a lightened field too —
     // the page and the glass on it stay the same picture, which is the one
     // thing this whole theme rests on.
-    canvas.drawRect(Offset.zero & size, Paint()..color = fieldLift);
+    //
+    // The veil itself is laid in [_picture], per scene — see [LgBackdrop.lift].
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // The newer scenes (2026-11). All three keep what the classic field taught:
+  // a lens needs LINE WORK to bend, and the rims need a mid-tone to brighten.
+  // What changes is the line work — one idea per scene instead of curves,
+  // rings, dots and blobs all at once — so the page reads calmer and the
+  // refraction reads stronger.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /// Shared by every scene: a fine scatter of specks, so flat areas still give
+  /// a lens something to distort.
+  static void _grain(Canvas canvas, Size size, double Function() rnd, {int count = 2600}) {
+    final speck = Paint();
+    for (var i = 0; i < count; i++) {
+      final v = rnd();
+      speck.color = (v < .5 ? Colors.black : Colors.white).withValues(alpha: .025 + rnd() * .035);
+      canvas.drawRect(Rect.fromLTWH(rnd() * size.width, rnd() * size.height, 1.4, 1.4), speck);
+    }
+  }
+
+  /// Soft colour pools, positions as fractions of the field and the radius as
+  /// a fraction of its width.
+  ///
+  /// [geometry] is `[x, y, radius, alpha]` per pool; [colors] are matched to
+  /// it in order.
+  static void _pools(Canvas canvas, Size size, List<List<double>> geometry, List<Color> colors) {
+    for (var i = 0; i < geometry.length; i++) {
+      final p = geometry[i];
+      final c = Offset(p[0] * size.width, p[1] * size.height);
+      final r = p[2] * size.width;
+      final color = colors[i % colors.length].withValues(alpha: p[3]);
+      final rect = Rect.fromCircle(center: c, radius: r);
+      canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..shader = RadialGradient(
+            colors: [color, color.withValues(alpha: color.a * .45), color.withValues(alpha: 0)],
+            stops: const [0, .5, 1],
+          ).createShader(rect),
+      );
+    }
+  }
+
+  /// ── AURORA SILK ──
+  ///
+  /// A pastel aurora with three twisting ribbons of fine parallel strands
+  /// running across it. Parallel lines are the best thing there is for showing
+  /// refraction — a lens bends a bundle of them into a visible curve — and a
+  /// ribbon gathers them where the page wants movement instead of spreading
+  /// clutter everywhere.
+  static void _paintAurora(Canvas canvas, Size size, LgTone tone) {
+    final w = size.width, h = size.height;
+    final rnd = _rng(20261104);
+    final a = tone.accents == null ? null : _accents(tone, const []);
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: _base(tone, const [0xfff2eefe, 0xffedf1fd, 0xfff0f6fc]),
+        ).createShader(Offset.zero & size),
+    );
+    _pools(
+      canvas,
+      size,
+      const [
+        [.06, .10, .58, .40],
+        [.94, .16, .50, .34],
+        [.52, .50, .40, .18],
+        [.16, .94, .52, .28],
+        [.86, .98, .54, .32],
+      ],
+      a == null
+          ? const [Color(0xff9b87f5), Color(0xff7cc4f8), Color(0xffc6a5fa), Color(0xff7ddccd), Color(0xfff4a6cc)]
+          : [a[0], a[1], a[2], a[4], a[3]],
+    );
+    final ribbons =
+        a == null ? const [Color(0xff8b7cf6), Color(0xff5ab4ee), Color(0xffef8bbf)] : [a[0], a[1], a[3]];
+
+    void ribbon({
+      required double y0,
+      required double amp,
+      required double freq,
+      required double phase,
+      required double half,
+      required double twist,
+      required double twistPhase,
+      required Color tint,
+      required double strength,
+      int strands = 34,
+    }) {
+      const step = 6.0;
+      const tau = 2 * pi;
+      double spine(double x) =>
+          y0 + amp * sin(freq * x / w * tau + phase) + amp * .32 * sin(freq * 2.3 * x / w * tau + phase * 1.7);
+      // The half-width swings through zero — that is the twist, where every
+      // strand crosses at one point and the ribbon turns over.
+      double off(double x) => half * cos(twist * x / w * tau + twistPhase);
+
+      // The body: a faint wash of the ribbon's colour between its two edges.
+      final body = Path()..moveTo(-20, spine(-20) + off(-20));
+      for (var x = -20.0 + step; x <= w + 20; x += step) {
+        body.lineTo(x, spine(x) + off(x));
+      }
+      for (var x = w + 20; x >= -20; x -= step) {
+        body.lineTo(x, spine(x) - off(x));
+      }
+      body.close();
+      canvas.drawPath(body, Paint()..color = tint.withValues(alpha: .2 * strength));
+
+      final stroke = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..isAntiAlias = true;
+      for (var i = 0; i < strands; i++) {
+        final t = -1 + 2 * i / (strands - 1);
+        // White on a pale page is invisible, so the strands carry the ribbon's
+        // own colour through the middle and turn to bright white at the edges,
+        // like light catching the fold of a sheet.
+        final edge = t * t;
+        stroke.color = Color.lerp(tint, Colors.white, .35 + .65 * edge)!
+            .withValues(alpha: (.3 + .55 * edge) * strength);
+        final path = Path()..moveTo(-20, spine(-20) + t * off(-20));
+        for (var x = -20.0 + step; x <= w + 20; x += step) {
+          path.lineTo(x, spine(x) + t * off(x));
+        }
+        canvas.drawPath(path, stroke);
+      }
+    }
+
+    ribbon(
+        y0: h * .28, amp: 70, freq: .8, phase: .6, half: 82, twist: 1.1, twistPhase: .3,
+        tint: ribbons[0], strength: 1);
+    ribbon(
+        y0: h * .64, amp: 88, freq: .6, phase: 2.4, half: 106, twist: .8, twistPhase: 1.9,
+        tint: ribbons[1], strength: .95);
+    ribbon(
+        y0: h * .9, amp: 46, freq: 1, phase: 4.1, half: 58, twist: 1.4, twistPhase: .9,
+        tint: ribbons[2], strength: .75, strands: 26);
+
+    // Where the light comes from: a soft lift in the top-left.
+    final sheen = Rect.fromCircle(center: Offset(w * .22, -h * .12), radius: w * .7);
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = const RadialGradient(colors: [Color(0x59ffffff), Color(0x00ffffff)])
+            .createShader(sheen),
+    );
+    _grain(canvas, size, rnd);
+  }
+
+  /// ── CONTOUR ──
+  ///
+  /// A soft pastel gradient drawn over with topographic lines — iso-lines of a
+  /// smooth height field, every fifth one heavier, the way a survey map marks
+  /// its index contours. Closed, nested, never crossing: the calmest line work
+  /// there is, and a drop sliding over it pulls the rings visibly out of shape.
+  static void _paintContour(Canvas canvas, Size size, LgTone tone) {
+    final w = size.width, h = size.height;
+    final rnd = _rng(7340211);
+    final a = tone.accents == null ? null : _accents(tone, const []);
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: _base(tone, const [0xffeeeafd, 0xfff1eefc, 0xffe8f3fb]),
+        ).createShader(Offset.zero & size),
+    );
+    _pools(
+      canvas,
+      size,
+      const [
+        [.10, .16, .52, .34],
+        [.80, .06, .42, .26],
+        [.90, .78, .52, .28],
+        [.30, .98, .46, .26],
+      ],
+      a == null
+          ? const [Color(0xff9d8af6), Color(0xffffc49e), Color(0xff6fd3c6), Color(0xfff4a2c8)]
+          : [a[0], a[3], a[1], a[2]],
+    );
+    // The ink: the tone's deep colour, or the original violet.
+    final ink = a == null ? const Color(0xff6d5fd6) : a[5];
+
+    // The height field: a handful of hills and hollows plus one long swell.
+    final hills = [
+      for (var i = 0; i < 9; i++)
+        [rnd() * w, rnd() * h, 90 + rnd() * 210, (rnd() < .35 ? -1 : 1) * (.5 + rnd())],
+    ];
+    double f(double x, double y) {
+      var v = .14 * sin(x / w * 5 + y / h * 3);
+      for (final hl in hills) {
+        final dx = x - hl[0], dy = y - hl[1], s = hl[2];
+        v += hl[3] * exp(-(dx * dx + dy * dy) / (2 * s * s));
+      }
+      return v;
+    }
+
+    const step = 5.0;
+    final cols = (w / step).ceil() + 1, rows = (h / step).ceil() + 1;
+    final g = Float64List(cols * rows);
+    var lo = double.infinity, hi = -double.infinity;
+    for (var j = 0; j < rows; j++) {
+      for (var i = 0; i < cols; i++) {
+        final v = f(i * step, j * step);
+        g[j * cols + i] = v;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+
+    // Marching squares, one path per level.
+    const levels = 26;
+    // Ink, not light: a white line on a page this pale disappears, so the lines
+    // are a faint violet, the way a survey map prints its contours. The index
+    // lines also get a white highlight beside them, which reads as a ridge.
+    final thin = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = ink.withValues(alpha: .2);
+    final bold = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..color = ink.withValues(alpha: .34);
+    final ridge = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      ..color = Colors.white.withValues(alpha: .85);
+    for (var k = 1; k < levels; k++) {
+      final level = lo + (hi - lo) * k / levels;
+      final path = Path();
+      for (var j = 0; j < rows - 1; j++) {
+        for (var i = 0; i < cols - 1; i++) {
+          final tl = g[j * cols + i], tr = g[j * cols + i + 1];
+          final bl = g[(j + 1) * cols + i], br = g[(j + 1) * cols + i + 1];
+          final code = (tl > level ? 8 : 0) | (tr > level ? 4 : 0) | (br > level ? 2 : 0) | (bl > level ? 1 : 0);
+          if (code == 0 || code == 15) continue;
+          final x0 = i * step, y0 = j * step, x1 = x0 + step, y1 = y0 + step;
+          Offset edge(int e) => switch (e) {
+                0 => Offset(x0 + step * (level - tl) / (tr - tl), y0), // top
+                1 => Offset(x1, y0 + step * (level - tr) / (br - tr)), // right
+                2 => Offset(x0 + step * (level - bl) / (br - bl), y1), // bottom
+                _ => Offset(x0, y0 + step * (level - tl) / (bl - tl)), // left
+              };
+          void seg(int a, int b) {
+            final p = edge(a), q = edge(b);
+            path
+              ..moveTo(p.dx, p.dy)
+              ..lineTo(q.dx, q.dy);
+          }
+
+          switch (code) {
+            case 1 || 14:
+              seg(3, 2);
+            case 2 || 13:
+              seg(2, 1);
+            case 3 || 12:
+              seg(3, 1);
+            case 4 || 11:
+              seg(0, 1);
+            case 6 || 9:
+              seg(0, 2);
+            case 7 || 8:
+              seg(3, 0);
+            case 5:
+              seg(3, 0);
+              seg(2, 1);
+            case 10:
+              seg(0, 1);
+              seg(3, 2);
+          }
+        }
+      }
+      if (k % 5 == 0) {
+        canvas.drawPath(path.shift(const Offset(-1.2, -1.2)), ridge);
+        canvas.drawPath(path, bold);
+      } else {
+        canvas.drawPath(path, thin);
+      }
+    }
+    _grain(canvas, size, rnd, count: 2000);
+  }
+
+  /// ── BUBBLES ──
+  ///
+  /// Glass bubbles floating over a lilac haze, with a few out-of-focus ones
+  /// behind for depth. The theme's own vocabulary — a drop of glass on the page
+  /// looking at drops of glass in the background — and each bubble is a crisp
+  /// bright ring, which is exactly what a lens shows off best.
+  static void _paintBubbles(Canvas canvas, Size size, LgTone tone) {
+    final w = size.width, h = size.height;
+    final rnd = _rng(4242026);
+    final a = tone.accents == null ? null : _accents(tone, const []);
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: _base(tone, const [0xfff1effe, 0xffeaf0fd]),
+        ).createShader(Offset.zero & size),
+    );
+    _pools(
+      canvas,
+      size,
+      const [
+        [.12, .18, .55, .36],
+        [.88, .22, .46, .30],
+        [.70, .92, .52, .30],
+        [.20, .90, .44, .26],
+      ],
+      a == null
+          ? const [Color(0xff8f86f4), Color(0xff6fc6ef), Color(0xfff19ccb), Color(0xff86dccf)]
+          : [a[0], a[1], a[3], a[2]],
+    );
+
+    final tints = a == null
+        ? const [Color(0xff7c6cf0), Color(0xff4fb2e8), Color(0xffe882b8), Color(0xff4cc3b2)]
+        : [a[5], a[1], a[3], a[2]];
+
+    // Far away and out of focus.
+    for (var i = 0; i < 14; i++) {
+      final r = 40 + rnd() * 120;
+      final c = Offset(rnd() * w, rnd() * h);
+      final tint = i.isEven ? Colors.white : tints[i % tints.length];
+      canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..color = tint.withValues(alpha: i.isEven ? .28 : .12)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * .22),
+      );
+    }
+
+    // In focus. Big ones first, so the small ones sit on top.
+    final bubbles = [
+      for (var i = 0; i < 34; i++) (Offset(rnd() * w, rnd() * h), 8 + pow(rnd(), 2) * 92.0, tints[i % tints.length]),
+    ]..sort((a, b) => b.$2.compareTo(a.$2));
+    for (final (c, r, tint) in bubbles) {
+      final rect = Rect.fromCircle(center: c, radius: r);
+      // Clear in the middle, tinted toward the edge — the way a sphere of
+      // glass looks, thicker the more obliquely you look through it.
+      canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..shader = RadialGradient(
+            center: const Alignment(-.25, -.3),
+            colors: [
+              Colors.white.withValues(alpha: .14),
+              tint.withValues(alpha: .07),
+              tint.withValues(alpha: .24),
+            ],
+            stops: const [0, .7, 1],
+          ).createShader(rect),
+      );
+      // The rim, and a coloured inner edge just inside it.
+      canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = r > 30 ? 1.4 : 1
+          ..color = Colors.white.withValues(alpha: .8),
+      );
+      if (r > 14) {
+        canvas.drawCircle(
+          c,
+          r - 2.4,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1
+            ..color = tint.withValues(alpha: .3),
+        );
+      }
+      // The specular: a bright arc on the upper left, a faint one opposite.
+      final arc = rect.deflate(r * .2);
+      canvas.drawArc(
+        arc,
+        pi * 1.05,
+        pi * .42,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeWidth = max(1.2, r * .07)
+          ..color = Colors.white.withValues(alpha: .85),
+      );
+      canvas.drawArc(
+        rect.deflate(r * .12),
+        pi * .12,
+        pi * .3,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeWidth = max(1, r * .035)
+          ..color = Colors.white.withValues(alpha: .4),
+      );
+    }
+
+    // A few pinpricks of light between them.
+    final spark = Paint()..color = Colors.white.withValues(alpha: .6);
+    for (var i = 0; i < 70; i++) {
+      canvas.drawCircle(Offset(rnd() * w, rnd() * h), .8 + rnd() * 1.4, spark);
+    }
+    _grain(canvas, size, rnd, count: 2000);
   }
 
   /// ── DIAL: how strong the COLOUR is. ──

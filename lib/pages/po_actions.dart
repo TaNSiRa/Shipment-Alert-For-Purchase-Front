@@ -60,6 +60,27 @@ Future<bool> showAdvanceDialog(
   bool busy = false;
   final bulk = pos.length > 1;
 
+  // Past the S/I step a shipment (same Acknowledgment No.) moves as one: the
+  // server closes the step on its other POs too, or refuses while one of them
+  // is not past the S/I step yet.
+  Map<String, dynamic>? shipment;
+  if (!bulk) {
+    try {
+      final r = await api.getJson('/pos/${pos.first['id']}/shipment');
+      shipment = Map<String, dynamic>.from(r['data'] as Map);
+    } on ApiException {
+      shipment = null;
+    }
+    if (!context.mounted) return false;
+  }
+  final together = shipment?['together'] == true;
+  final moveWith = ((shipment?['moveWith'] as List?) ?? const [])
+      .map((e) => Map<String, dynamic>.from(e as Map))
+      .toList();
+  final blocked = together && shipment?['message'] != null;
+  String poLabel(Map p) =>
+      '${p['poNo']}${(intFrom(p['splitNo']) ?? 0) > 0 ? ' #${p['splitNo']}' : ''}';
+
   final ok = await showGlassDialog<bool>(
     context: context,
     builder: (ctx) => StatefulBuilder(builder: (ctx, setState) {
@@ -94,12 +115,16 @@ Future<bool> showAdvanceDialog(
           } else {
             final result =
                 await api.postJson('/pos/${pos.first['id']}/advance', body);
+            final also = ((result['withShipment'] as List?) ?? const []).length;
             if (ctx.mounted) {
               AppToast.success(
                   ctx,
-                  result['completed'] == true
-                      ? 'PO ${pos.first['poNo']} is complete 🎉'
-                      : 'PO ${pos.first['poNo']}: ${step['shortName']} done');
+                  (result['completed'] == true
+                          ? 'PO ${pos.first['poNo']} is complete 🎉'
+                          : 'PO ${pos.first['poNo']}: ${step['shortName']} done') +
+                      (also > 0
+                          ? ' — with ${plural(also, 'other PO')} of shipment ${result['shipment']}'
+                          : ''));
               Navigator.pop(ctx, true);
             }
           }
@@ -112,6 +137,7 @@ Future<bool> showAdvanceDialog(
       final late = pos.first['nextDueDate'] != null
           ? actual.difference(parseIsoDate(pos.first['nextDueDate'])!).inDays
           : 0;
+      final fileStep = step['code'] == 'ACK' || step['code'] == 'SI';
       return AppDialog(
         title: bulk ? 'Mark step done on ${pos.length} POs' : 'Mark step done',
         subtitle: bulk
@@ -147,6 +173,35 @@ Future<bool> showAdvanceDialog(
                 ]),
             ]),
           ),
+          if (fileStep) ...[
+            const SizedBox(height: 12),
+            InfoStrip(
+              icon: Icons.upload_file_outlined,
+              color: DsColors.amberFg,
+              text:
+                  'This step is normally closed by uploading the ${step['code'] == 'ACK' ? 'OCR ACK' : 'OCR SI'} file on the Import page '
+                  '(it also checks quantities${step['code'] == 'SI' ? ' and stores ETD / ETA' : ' and groups the shipment'}). '
+                  'Mark it here only when the file has a problem.',
+            ),
+          ],
+          if (blocked) ...[
+            const SizedBox(height: 12),
+            InfoStrip(
+              icon: Icons.block,
+              color: DsColors.redFg,
+              text: '${shipment!['message']}.',
+            ),
+          ] else if (moveWith.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            InfoStrip(
+              icon: Icons.local_shipping_outlined,
+              color: DsColors.purpleFg,
+              text:
+                  'Shipment ${shipment!['ackNo']}: this step is also marked done on '
+                  '${moveWith.length == 1 ? 'PO' : 'POs'} ${moveWith.map(poLabel).join(', ')} '
+                  '(same Acknowledgment No.), with the same date${'${step['referenceLabel'] ?? ''}'.isNotEmpty ? ', reference' : ''} and remark.',
+            ),
+          ],
           const SizedBox(height: 16),
           DsLabeledField(
             label: 'Date it happened',
@@ -189,7 +244,11 @@ Future<bool> showAdvanceDialog(
                 controller: ref,
                 maxLength: 80,
                 decoration: dsInput(
-                        hint: stepNo == 4 ? 'e.g. EX-26-W87' : null,
+                        hint: step['code'] == 'SI'
+                            ? 'e.g. EX-26-W87'
+                            : step['code'] == 'ACK'
+                                ? 'e.g. 141-02-W051'
+                                : null,
                         icon: Icons.tag)
                     .copyWith(counterText: ''),
               ),
@@ -220,10 +279,14 @@ Future<bool> showAdvanceDialog(
               height: 40,
               onPressed: busy ? null : () => Navigator.pop(ctx, false)),
           DsPrimaryButton(
-            label: busy ? 'Saving…' : 'Mark done',
+            label: busy
+                ? 'Saving…'
+                : moveWith.isNotEmpty && !blocked
+                    ? 'Mark done on ${moveWith.length + 1} POs'
+                    : 'Mark done',
             icon: Icons.check,
             height: 40,
-            onPressed: busy ? null : submit,
+            onPressed: busy || blocked ? null : submit,
           ),
         ],
       );
@@ -235,20 +298,43 @@ Future<bool> showAdvanceDialog(
 Future<bool> undoLastStep(BuildContext context, Map<String, dynamic> po) async {
   final last = (intFrom(po['currentStep']) ?? 2) - 1;
   final step = WorkflowCache.stepOf(last);
+  final api = AppScope.read(context).api;
+  // Past the S/I step the server reopens the step on the whole shipment
+  // (same Acknowledgment No.); name those POs before asking.
+  var undoWith = const <Map<String, dynamic>>[];
+  String? ackNo;
+  try {
+    final r = await api.getJson('/pos/${po['id']}/shipment');
+    final data = Map<String, dynamic>.from(r['data'] as Map);
+    ackNo = data['ackNo'] as String?;
+    undoWith = ((data['undoWith'] as List?) ?? const [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+  } on ApiException {
+    undoWith = const [];
+  }
+  if (!context.mounted) return false;
+  String label(Map p) =>
+      '${p['poNo']}${(intFrom(p['splitNo']) ?? 0) > 0 ? ' #${p['splitNo']}' : ''}';
+  final others = undoWith.map(label).join(', ');
   final ok = await confirmAction(
     context,
-    title: 'Undo the last step?',
+    title: undoWith.isEmpty
+        ? 'Undo the last step?'
+        : 'Undo the last step on ${undoWith.length + 1} POs?',
     message:
-        'Step $last${step == null ? '' : ' · ${step['name']}'} of PO ${po['poNo']} goes back to "not done", '
-        'and the due dates after it are worked out again.',
-    confirmLabel: 'Undo step',
+        'Step $last${step == null ? '' : ' · ${step['name']}'} of PO ${po['poNo']}'
+        '${undoWith.isEmpty ? '' : ' and of ${undoWith.length == 1 ? 'PO' : 'POs'} $others (same shipment $ackNo)'}'
+        ' goes back to "not done", and the due dates after it are worked out again.',
+    confirmLabel: undoWith.isEmpty ? 'Undo step' : 'Undo on ${undoWith.length + 1} POs',
     icon: Icons.undo,
   );
   if (!ok || !context.mounted) return false;
-  final api = AppScope.read(context).api;
   final result = await guard(
       context, () => api.postJson('/pos/${po['id']}/undo', {}),
-      success: 'Step $last reopened');
+      success: undoWith.isEmpty
+          ? 'Step $last reopened'
+          : 'Step $last reopened on ${undoWith.length + 1} POs of shipment $ackNo');
   return result != null;
 }
 
@@ -299,12 +385,13 @@ Future<bool> deletePo(BuildContext context, Map<String, dynamic> po) async {
 }
 
 /// Edit the PO header. Remark, mode and shipment ref for editors; PO date and
-/// lead time (which re-plan the PO) for section admins only.
+/// (which re-plans the PO) for section admins only.
 Future<bool> editPoDialog(BuildContext context, Map<String, dynamic> po) async {
   final scope = AppScope.read(context);
   final remark = TextEditingController(text: '${po['remark'] ?? ''}');
   final ref = TextEditingController(text: '${po['shipmentRef'] ?? ''}');
-  final lead = TextEditingController(text: '${po['leadTimeDays'] ?? ''}');
+  final ack = TextEditingController(text: '${po['ackNo'] ?? ''}');
+  DateTime? delivery = parseIsoDate(po['deliveryDate']);
   String? mode = po['shipMode'] as String?;
   DateTime docDate = parseIsoDate(po['documentDate']) ?? DateTime.now();
   bool busy = false;
@@ -318,16 +405,14 @@ Future<bool> editPoDialog(BuildContext context, Map<String, dynamic> po) async {
           'remark': remark.text.trim(),
           'shipMode': mode ?? '',
           'shipmentRef': ref.text.trim(),
+          'ackNo': ack.text.trim(),
+          if (delivery != null && isoDate(delivery!) != po['deliveryDate'])
+            'deliveryDate': isoDate(delivery!),
         };
         if (admin) {
-          final days = int.tryParse(lead.text.trim());
-          if (days == null || days < 1 || days > 365) {
-            return setState(() => error = 'Lead time must be 1–365 days');
-          }
           if (isoDate(docDate) != po['documentDate']) {
             body['documentDate'] = isoDate(docDate);
           }
-          if (days != intFrom(po['leadTimeDays'])) body['leadTimeDays'] = days;
         }
         setState(() => busy = true);
         try {
@@ -365,7 +450,39 @@ Future<bool> editPoDialog(BuildContext context, Map<String, dynamic> po) async {
             const SizedBox(width: 12),
             Expanded(
               child: DsLabeledField(
-                label: 'Shipment / S/I ref.',
+                label: 'Delivery date (step 7)',
+                child: InkWell(
+                  onTap: () async {
+                    final first = parseIsoDate(po['documentDate']) ?? DateTime(2020);
+                    var initial = delivery ?? DateTime.now();
+                    if (initial.isBefore(first)) initial = first;
+                    final picked = await showDatePicker(
+                        context: ctx,
+                        initialDate: initial,
+                        firstDate: first,
+                        lastDate: DateTime.now().add(const Duration(days: 365 * 3)));
+                    if (picked != null) setState(() => delivery = picked);
+                  },
+                  child: InputDecorator(
+                      decoration: dsInput(icon: Icons.event_outlined),
+                      child: Text(delivery == null ? 'Not set' : fmtDate(isoDate(delivery!)))),
+                ),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(
+              child: DsLabeledField(
+                label: 'Shipment (Acknowledgment No.)',
+                child: TextField(
+                    controller: ack, decoration: dsInput(hint: '141-02-W051')),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: DsLabeledField(
+                label: 'S/I No.',
                 child: TextField(
                     controller: ref, decoration: dsInput(hint: 'EX-26-W87')),
               ),
@@ -404,24 +521,14 @@ Future<bool> editPoDialog(BuildContext context, Map<String, dynamic> po) async {
                 ),
               ),
               const SizedBox(width: 12),
-              Expanded(
-                child: DsLabeledField(
-                  label: 'Lead time (days)',
-                  child: TextField(
-                    controller: lead,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: dsInput(icon: Icons.timelapse),
-                  ),
-                ),
-              ),
+              const Spacer(),
             ]),
             const SizedBox(height: 8),
             const InfoStrip(
               icon: Icons.warning_amber_rounded,
               color: DsColors.amberFg,
               text:
-                  'Changing the PO date or lead time re-plans every open step and the ETA.',
+                  'Changing the PO date re-plans every open step (step 7 stays on the Delivery date).',
             ),
           ],
           if (error != null) ...[
@@ -445,6 +552,29 @@ Future<bool> editPoDialog(BuildContext context, Map<String, dynamic> po) async {
     }),
   );
   return ok == true;
+}
+
+/// Step 7 "Factory good received" is due on the PO's Delivery date, which
+/// any editor can move at any time (also once the goods are in).
+Future<bool> editDeliveryDate(BuildContext context, Map<String, dynamic> po) async {
+  final first = parseIsoDate(po['documentDate']) ?? DateTime(2020);
+  var initial = parseIsoDate(po['deliveryDate'] ?? po['etaDate']) ?? DateTime.now();
+  if (initial.isBefore(first)) initial = first;
+  final picked = await showDatePicker(
+    context: context,
+    initialDate: initial,
+    firstDate: first,
+    lastDate: DateTime.now().add(const Duration(days: 365 * 3)),
+    helpText: 'Delivery date of PO ${po['poNo']}',
+  );
+  if (picked == null || !context.mounted) return false;
+  if (isoDate(picked) == po['deliveryDate']) return false;
+  final api = AppScope.read(context).api;
+  return await guard(
+          context,
+          () => api.patchJson('/pos/${po['id']}', {'deliveryDate': isoDate(picked)}),
+          success: 'Delivery date set to ${fmtDate(isoDate(picked))}') !=
+      null;
 }
 
 /// Round numbered badge for a step.

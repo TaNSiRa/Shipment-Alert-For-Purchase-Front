@@ -33,7 +33,7 @@ part 'pages/dashboard_page.dart';
 part 'pages/po_table_page.dart';
 part 'pages/po_detail_dialog.dart';
 part 'pages/po_actions.dart';
-part 'pages/po_import_dialog.dart';
+part 'pages/import_page.dart';
 part 'pages/po_create_dialog.dart';
 part 'pages/roadmap_page.dart';
 part 'pages/calendar_page.dart';
@@ -43,6 +43,7 @@ part 'pages/users_page.dart';
 part 'pages/settings_page.dart';
 part 'pages/profile_page.dart';
 part 'pages/profile_id_badge.dart';
+part 'pages/appearance_settings.dart';
 part 'shared/design.dart';
 part 'shared/liquid_glass.dart';
 part 'shared/smooth_scroll.dart';
@@ -69,6 +70,8 @@ void main() {
   Lg.restore();
   // And the login scene on the water that was left on (RAP's Halcyon login).
   HcWater.restore();
+  // And the scene behind the glass (profile → Appearance).
+  LgScene.restore();
   LiquidField.ensure();
   runApp(const PurchaseShipmentAlertApp());
 }

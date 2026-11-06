@@ -420,7 +420,7 @@ const _kLoginStops = [
 const _kLoginStopsLive = 2;
 const _kLoginHighlights = [
   'Upload the SAP "DATA BY SAP" Excel — no retyping',
-  '9 steps, one input: just mark each step done',
+  '7 steps, driven by the SAP files: import, check, done',
   'Overdue alerts, road map and a month-end email',
 ];
 

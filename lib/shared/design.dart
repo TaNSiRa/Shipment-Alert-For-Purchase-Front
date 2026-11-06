@@ -3399,3 +3399,877 @@ InputDecoration dsInput({String? hint, IconData? icon, Widget? suffix, String? e
         borderRadius: BorderRadius.circular(9), borderSide: const BorderSide(color: DsColors.navy, width: 1.6)),
   );
 }
+
+// ---------------------------------------------------------------------------
+// Themed switches
+// ---------------------------------------------------------------------------
+//
+// Every on/off control in the app is one of these, each dressed for what it
+// switches:
+//
+//   DsBellSwitch    does someone get mail          Email alerts, Profile
+//   DsShipSwitch    is a supplier/material active  Master data dialogs
+//   DsAccessSwitch  can a user account sign in     Manage users
+//   DsSyncSwitch    read data from outside         Holiday database
+//
+// (The login page's water switch is the fifth, kept beside the scene it
+// belongs to in login_water.dart.)
+//
+// They all stand on [_DsSwitchShell] — track, knob, spring, hover, focus
+// ring, keyboard, semantics, disabled look — and differ only in colours, what
+// is drawn on the track and what the knob holds. Same contract as Material's
+// [Switch]: `onChanged == null` disables it. Every movement reads through
+// [DsMotion.of], so "reduce motion" leaves a plain sliding switch.
+
+/// The four looks a [DsSwitchTile] can wear.
+enum DsSwitchStyle { bell, ship, access, sync }
+
+/// The switch for [style].
+Widget dsThemedSwitch(DsSwitchStyle style,
+    {required bool value,
+    required ValueChanged<bool>? onChanged,
+    String? semanticLabel}) {
+  return switch (style) {
+    DsSwitchStyle.bell => DsBellSwitch(
+        value: value, onChanged: onChanged, semanticLabel: semanticLabel),
+    DsSwitchStyle.ship => DsShipSwitch(
+        value: value, onChanged: onChanged, semanticLabel: semanticLabel),
+    DsSwitchStyle.access => DsAccessSwitch(
+        value: value, onChanged: onChanged, semanticLabel: semanticLabel),
+    DsSwitchStyle.sync => DsSyncSwitch(
+        value: value, onChanged: onChanged, semanticLabel: semanticLabel),
+  };
+}
+
+/// [SwitchListTile]'s shape with a themed switch on the end: title, optional
+/// subtitle, the whole row tappable.
+class DsSwitchTile extends StatelessWidget {
+  const DsSwitchTile({
+    super.key,
+    required this.style,
+    required this.value,
+    required this.onChanged,
+    required this.title,
+    this.subtitle,
+    this.contentPadding = EdgeInsets.zero,
+  });
+
+  final DsSwitchStyle style;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+  final Widget title;
+  final Widget? subtitle;
+  final EdgeInsetsGeometry contentPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: contentPadding,
+      title: title,
+      subtitle: subtitle,
+      enabled: onChanged != null,
+      onTap: onChanged == null ? null : () => onChanged!(!value),
+      trailing: ExcludeSemantics(
+          child:
+              dsThemedSwitch(style, value: value, onChanged: onChanged)),
+    );
+  }
+}
+
+/// The colour transition every themed switch uses for its track and icons.
+const Duration _dsSwitchColour = Duration(milliseconds: 280);
+
+/// An icon in the knob that cross-fades and pops when the switch flips.
+Widget _dsKnobIcon(
+  Duration d,
+  bool on, {
+  required IconData onIcon,
+  required Color onColour,
+  required IconData offIcon,
+  Color offColour = const Color(0xff9a98b0),
+  double size = 16,
+}) {
+  return AnimatedSwitcher(
+    duration: d,
+    transitionBuilder: (c, a) =>
+        ScaleTransition(scale: a, child: FadeTransition(opacity: a, child: c)),
+    child: on
+        ? Icon(onIcon, key: const ValueKey('on'), size: size, color: onColour)
+        : Icon(offIcon,
+            key: const ValueKey('off'), size: size - 1, color: offColour),
+  );
+}
+
+/// A small icon parked on the free side of the track, shown in one state.
+Widget _dsTrackIcon(Duration d,
+    {required bool visible,
+    required IconData icon,
+    required Color colour,
+    double? left,
+    double? right,
+    double size = 13}) {
+  return Positioned(
+    left: left,
+    right: right,
+    top: 0,
+    bottom: 0,
+    child: AnimatedOpacity(
+      duration: d,
+      opacity: visible ? 1 : 0,
+      child: Icon(icon, size: size, color: colour),
+    ),
+  );
+}
+
+class _DsSwitchShell extends StatefulWidget {
+  const _DsSwitchShell({
+    required this.value,
+    required this.onChanged,
+    required this.semanticLabel,
+    required this.trackOn,
+    required this.trackOff,
+    required this.knob,
+    this.layers = const [],
+    this.badge,
+    this.width = 60,
+    this.height = 32,
+    this.borderOff = const Color(0x14141620),
+    this.knobColors = const [Colors.white, Color(0xfff1f0fa)],
+    this.focusColor = DsColors.navy,
+    this.tapPadding = const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+  });
+
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+  final String? semanticLabel;
+  final List<Color> trackOn;
+  final List<Color> trackOff;
+
+  /// Drawn on the track under the knob, each positioned by the caller.
+  final List<Widget> layers;
+
+  /// What sits inside the round knob — normally a [_dsKnobIcon].
+  final Widget knob;
+
+  /// Pinned to the knob's top-right corner (the bell's unread dot).
+  final Widget? badge;
+  final double width;
+  final double height;
+  final Color borderOff;
+  final List<Color> knobColors;
+  final Color focusColor;
+
+  /// Grows the hit area past the track; the default makes it 48 px tall,
+  /// like Material's switch.
+  final EdgeInsets tapPadding;
+
+  @override
+  State<_DsSwitchShell> createState() => _DsSwitchShellState();
+}
+
+class _DsSwitchShellState extends State<_DsSwitchShell> {
+  bool _hover = false;
+  bool _focus = false;
+
+  bool get _enabled => widget.onChanged != null;
+  void _toggle() => widget.onChanged?.call(!widget.value);
+
+  @override
+  Widget build(BuildContext context) {
+    final on = widget.value;
+    final h = widget.height;
+    final pad = h >= 30 ? 3.0 : 2.0;
+    final knob = h - pad * 2;
+    final colour = DsMotion.of(context, _dsSwitchColour);
+    final glow = widget.trackOn.last;
+
+    final track = AnimatedContainer(
+      duration: colour,
+      curve: DsMotion.curveChrome,
+      width: widget.width,
+      height: h,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(h / 2),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: on ? widget.trackOn : widget.trackOff,
+        ),
+        border: Border.all(
+            color: on ? const Color(0x40ffffff) : widget.borderOff),
+        boxShadow: [
+          if (_focus)
+            BoxShadow(
+                color: widget.focusColor.withValues(alpha: .35),
+                spreadRadius: 3),
+          if (on)
+            BoxShadow(
+              color: glow.withValues(alpha: _hover ? .45 : .30),
+              blurRadius: _hover ? 14 : 10,
+              offset: const Offset(0, 3),
+            ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(h / 2),
+        child: Stack(children: [
+          ...widget.layers,
+          AnimatedAlign(
+            duration: DsMotion.of(context, DsMotion.slide),
+            curve: DsMotion.curveSlide,
+            alignment: on ? Alignment.centerRight : Alignment.centerLeft,
+            child: Padding(
+              padding: EdgeInsets.all(pad),
+              child: AnimatedScale(
+                duration: DsMotion.of(context, DsMotion.fast),
+                scale: _hover ? 1.06 : 1,
+                child: Stack(clipBehavior: Clip.none, children: [
+                  Container(
+                    width: knob,
+                    height: knob,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: widget.knobColors,
+                      ),
+                      boxShadow: const [
+                        BoxShadow(
+                            color: Color(0x2a1d1a52),
+                            blurRadius: 4,
+                            offset: Offset(0, 1.5)),
+                      ],
+                    ),
+                    child: widget.knob,
+                  ),
+                  if (widget.badge != null)
+                    Positioned(top: -1, right: -1, child: widget.badge!),
+                ]),
+              ),
+            ),
+          ),
+        ]),
+      ),
+    );
+
+    return Semantics(
+      toggled: on,
+      enabled: _enabled,
+      label: widget.semanticLabel,
+      onTap: _enabled ? _toggle : null,
+      child: FocusableActionDetector(
+        enabled: _enabled,
+        mouseCursor:
+            _enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+        onShowHoverHighlight: (v) => setState(() => _hover = v),
+        onShowFocusHighlight: (v) => setState(() => _focus = v),
+        actions: {
+          ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+            _toggle();
+            return null;
+          }),
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _enabled ? _toggle : null,
+          child: Padding(
+            padding: widget.tapPadding,
+            child: AnimatedOpacity(
+              duration: colour,
+              opacity: _enabled ? 1 : .45,
+              child: track,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Runs [controller] in a loop while [on] (and motion is allowed), stops it
+/// otherwise. For the switches whose "on" is a scene that keeps moving.
+void _dsLoopWhile(BuildContext context, AnimationController controller,
+    bool on) {
+  final moving =
+      on && DsMotion.of(context, controller.duration!) != Duration.zero;
+  if (moving && !controller.isAnimating) {
+    controller.repeat();
+  } else if (!moving && controller.isAnimating) {
+    controller.stop();
+  }
+}
+
+/// Plays [controller] once from the start when [now] turns on, resets it when
+/// it turns off. For the switches that celebrate the flip, then sit still —
+/// never on first build, so a list that opens already-on stays quiet.
+void _dsPlayOnTurnOn(BuildContext context, AnimationController controller,
+    {required bool was, required bool now}) {
+  if (was == now) return;
+  if (now && DsMotion.of(context, controller.duration!) != Duration.zero) {
+    controller.forward(from: 0);
+  } else {
+    controller.reset();
+  }
+}
+
+// ── Bell ────────────────────────────────────────────────────────────────────
+
+/// Does someone get mail: a bell that sleeps ("z z", muted icon, grey track)
+/// when off and RINGS when turned on — it swings, sound waves pulse out across
+/// the indigo track and an unread dot pops onto it. The ring plays once, on
+/// the change to on.
+class DsBellSwitch extends StatefulWidget {
+  const DsBellSwitch({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.semanticLabel,
+  });
+
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+  final String? semanticLabel;
+
+  @override
+  State<DsBellSwitch> createState() => _DsBellSwitchState();
+}
+
+class _DsBellSwitchState extends State<DsBellSwitch>
+    with SingleTickerProviderStateMixin {
+  static const _sleep = Color(0xff8e8ca8);
+
+  late final AnimationController _ring = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 1100));
+
+  @override
+  void didUpdateWidget(covariant DsBellSwitch old) {
+    super.didUpdateWidget(old);
+    _dsPlayOnTurnOn(context, _ring, was: old.value, now: widget.value);
+  }
+
+  @override
+  void dispose() {
+    _ring.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final on = widget.value;
+    final colour = DsMotion.of(context, _dsSwitchColour);
+    Widget z(double size, double top) => Padding(
+          padding: EdgeInsets.only(top: top),
+          child: Text('z',
+              style: TextStyle(
+                  fontSize: size,
+                  height: 1,
+                  fontWeight: FontWeight.w700,
+                  color: _sleep)),
+        );
+
+    return _DsSwitchShell(
+      value: on,
+      onChanged: widget.onChanged,
+      semanticLabel: widget.semanticLabel,
+      trackOn: const [DsColors.navyLight, DsColors.navy],
+      trackOff: const [Color(0xffe2e1ee), Color(0xffd3d2e4)],
+      layers: [
+        Positioned(
+          right: 9,
+          top: 0,
+          bottom: 0,
+          child: AnimatedOpacity(
+            duration: colour,
+            opacity: on ? 0 : 1,
+            child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [z(9, 13), const SizedBox(width: 1), z(11, 6)]),
+          ),
+        ),
+        Positioned.fill(
+          child: AnimatedOpacity(
+            duration: colour,
+            opacity: on ? 1 : 0,
+            child: AnimatedBuilder(
+              animation: _ring,
+              builder: (_, __) => CustomPaint(
+                  painter: _BellWavesPainter(_ring.value, _ring.isAnimating)),
+            ),
+          ),
+        ),
+      ],
+      knob: AnimatedBuilder(
+        animation: _ring,
+        builder: (_, child) {
+          // A damped swing: quick strikes that settle to rest.
+          final t = _ring.value;
+          final angle = _ring.isAnimating
+              ? sin(t * pi * 7) * (1 - t) * (1 - t) * .55
+              : 0.0;
+          return Transform.rotate(
+              angle: angle, alignment: const Alignment(0, -.75), child: child);
+        },
+        child: _dsKnobIcon(colour, on,
+            onIcon: Icons.notifications_active_rounded,
+            onColour: DsColors.navy,
+            offIcon: Icons.notifications_off_outlined),
+      ),
+      badge: AnimatedScale(
+        duration: DsMotion.of(context, const Duration(milliseconds: 260)),
+        curve: on ? Curves.easeOutBack : Curves.easeInCubic,
+        scale: on ? 1 : 0,
+        child: Container(
+          width: 9,
+          height: 9,
+          decoration: BoxDecoration(
+            color: DsColors.redBadge,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 1.5),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Two arcs opening left from the knob (which sits on the right when on).
+/// Still while idle; while [ringing] they swell outward and fade — a pulse
+/// per strike of the bell.
+class _BellWavesPainter extends CustomPainter {
+  _BellWavesPainter(this.t, this.ringing);
+  final double t;
+  final bool ringing;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final r = size.height / 2;
+    final centre = Offset(size.width - r, r);
+    final pulse = ringing ? (t * 3) % 1 : 0.0;
+    for (var i = 0; i < 2; i++) {
+      final radius = 18.0 + i * 6 + pulse * 5;
+      final alpha =
+          ((ringing ? 1 - pulse : 1.0) * (i == 0 ? .75 : .45)).clamp(0.0, 1.0);
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..strokeCap = StrokeCap.round
+        ..color = Colors.white.withValues(alpha: alpha);
+      canvas.drawArc(Rect.fromCircle(center: centre, radius: radius), pi - .5,
+          1.0, false, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BellWavesPainter old) =>
+      old.t != t || old.ringing != ringing;
+}
+
+// ── Ship ────────────────────────────────────────────────────────────────────
+
+/// Is a supplier/material active: a cargo ship at anchor in a still grey
+/// harbour when off, SAILING when on — open-sea blue, two layers of rolling
+/// waves, the boat rocking on them and a wake behind it. The sea keeps moving
+/// while on, so this is for a single "Active" row in an edit form, not a
+/// table with a switch per line.
+class DsShipSwitch extends StatefulWidget {
+  const DsShipSwitch({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.semanticLabel,
+  });
+
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+  final String? semanticLabel;
+
+  @override
+  State<DsShipSwitch> createState() => _DsShipSwitchState();
+}
+
+class _DsShipSwitchState extends State<DsShipSwitch>
+    with SingleTickerProviderStateMixin {
+  static const _deep = Color(0xff1d56c4);
+
+  late final AnimationController _sail = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 2400));
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _dsLoopWhile(context, _sail, widget.value);
+  }
+
+  @override
+  void didUpdateWidget(covariant DsShipSwitch old) {
+    super.didUpdateWidget(old);
+    _dsLoopWhile(context, _sail, widget.value);
+  }
+
+  @override
+  void dispose() {
+    _sail.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final on = widget.value;
+    final colour = DsMotion.of(context, _dsSwitchColour);
+    return _DsSwitchShell(
+      value: on,
+      onChanged: widget.onChanged,
+      semanticLabel: widget.semanticLabel,
+      trackOn: const [Color(0xff5cc0f2), _deep],
+      trackOff: const [Color(0xffe6eaf0), Color(0xffd3dae4)],
+      focusColor: _deep,
+      knobColors: const [Colors.white, Color(0xffeef4fb)],
+      layers: [
+        Positioned.fill(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(end: on ? 1 : 0),
+            duration: colour,
+            builder: (_, sea, __) => AnimatedBuilder(
+              animation: _sail,
+              builder: (_, __) =>
+                  CustomPaint(painter: _SeaPainter(_sail.value, sea)),
+            ),
+          ),
+        ),
+        _dsTrackIcon(colour,
+            visible: !on,
+            icon: Icons.anchor_rounded,
+            colour: const Color(0xff8593a6),
+            right: 8),
+      ],
+      knob: AnimatedBuilder(
+        animation: _sail,
+        builder: (_, child) {
+          // Rock on the swell: a tilt and a one-pixel bob, out of step so it
+          // reads as riding the water rather than spinning on a pin.
+          final a = _sail.value * 2 * pi;
+          final moving = _sail.isAnimating;
+          return Transform.translate(
+            offset: Offset(0, moving ? sin(a * 2) : 0),
+            child: Transform.rotate(
+              angle: moving ? sin(a * 2 + .8) * .12 : 0,
+              alignment: Alignment.bottomCenter,
+              child: child,
+            ),
+          );
+        },
+        child: _dsKnobIcon(colour, on,
+            onIcon: Icons.directions_boat_filled_rounded,
+            onColour: _deep,
+            offIcon: Icons.directions_boat_outlined,
+            offColour: const Color(0xff98a3b3)),
+      ),
+    );
+  }
+}
+
+/// Two wave bands along the bottom of the track plus, at sea, a wake trailing
+/// left of the boat. [t] loops 0→1 (one full swell); [sea] blends harbour (0)
+/// to open water (1).
+class _SeaPainter extends CustomPainter {
+  _SeaPainter(this.t, this.sea);
+  final double t;
+  final double sea;
+
+  void _wave(Canvas canvas, Size size,
+      {required double base,
+      required double amp,
+      required double length,
+      required double phase,
+      required Color colour}) {
+    final path = Path()..moveTo(0, size.height);
+    for (double x = 0; x <= size.width; x += 1) {
+      path.lineTo(x, base + amp * sin(2 * pi * (x / length + phase)));
+    }
+    path
+      ..lineTo(size.width, size.height)
+      ..close();
+    canvas.drawPath(path, Paint()..color = colour);
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final h = size.height;
+    _wave(canvas, size,
+        base: h * .69,
+        amp: .6 + sea * 1.4,
+        length: 16,
+        phase: t,
+        colour: Color.lerp(
+            const Color(0x33a9b8ca), const Color(0x38ffffff), sea)!);
+    _wave(canvas, size,
+        base: h * .81,
+        amp: .5 + sea * 1.6,
+        length: 22,
+        phase: -t + .3,
+        colour: Color.lerp(
+            const Color(0x59a9b8ca), const Color(0x61ffffff), sea)!);
+    if (sea <= 0) return;
+    // The wake: short foam dashes streaming left from under the boat.
+    final foam = Paint()
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round;
+    final y = h * .62;
+    final start = size.width - h + 2; // just behind the knob's left edge
+    for (var i = 0; i < 4; i++) {
+      final x = start - 6 - ((i * 7 + t * 28) % 28);
+      final fade = (1 - (start - x) / 34).clamp(0.0, 1.0) * sea;
+      foam.color = Colors.white.withValues(alpha: .7 * fade);
+      final dy = i.isEven ? 0.0 : 2.0;
+      canvas.drawLine(Offset(x, y + dy), Offset(x - 4, y + dy), foam);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_SeaPainter old) => old.t != t || old.sea != sea;
+}
+
+// ── Access ──────────────────────────────────────────────────────────────────
+
+/// Can a user account sign in: a staff badge at a door. Off, the account is
+/// locked out — grey track, padlock, a crossed-out person on the knob. On,
+/// the badge is swiped: a scan line sweeps the track once, the door light goes
+/// green, the padlock springs open and the knob shows the badge.
+class DsAccessSwitch extends StatefulWidget {
+  const DsAccessSwitch({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.semanticLabel,
+  });
+
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+  final String? semanticLabel;
+
+  @override
+  State<DsAccessSwitch> createState() => _DsAccessSwitchState();
+}
+
+class _DsAccessSwitchState extends State<DsAccessSwitch>
+    with SingleTickerProviderStateMixin {
+  static const _green = Color(0xff16a36a);
+
+  late final AnimationController _swipe = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 650));
+
+  @override
+  void didUpdateWidget(covariant DsAccessSwitch old) {
+    super.didUpdateWidget(old);
+    _dsPlayOnTurnOn(context, _swipe, was: old.value, now: widget.value);
+  }
+
+  @override
+  void dispose() {
+    _swipe.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final on = widget.value;
+    final colour = DsMotion.of(context, _dsSwitchColour);
+    return _DsSwitchShell(
+      value: on,
+      onChanged: widget.onChanged,
+      semanticLabel: widget.semanticLabel,
+      trackOn: const [Color(0xff4fd69c), _green],
+      trackOff: const [Color(0xffe6e4ea), Color(0xffd5d2dc)],
+      focusColor: _green,
+      knobColors: const [Colors.white, Color(0xffeffaf4)],
+      layers: [
+        _dsTrackIcon(colour,
+            visible: !on,
+            icon: Icons.lock_outline_rounded,
+            colour: const Color(0xff938fa3),
+            right: 9),
+        // The padlock pops open on the side the knob just left.
+        Positioned(
+          left: 9,
+          top: 0,
+          bottom: 0,
+          child: AnimatedScale(
+            duration: DsMotion.of(context, const Duration(milliseconds: 300)),
+            curve: on ? Curves.easeOutBack : Curves.easeInCubic,
+            scale: on ? 1 : 0,
+            child: const Icon(Icons.lock_open_rounded,
+                size: 13, color: Color(0xe6ffffff)),
+          ),
+        ),
+        Positioned.fill(
+          child: AnimatedBuilder(
+            animation: _swipe,
+            builder: (_, __) => _swipe.isAnimating
+                ? CustomPaint(painter: _ScanSweepPainter(_swipe.value))
+                : const SizedBox.shrink(),
+          ),
+        ),
+      ],
+      knob: _dsKnobIcon(colour, on,
+          onIcon: Icons.badge_rounded,
+          onColour: _green,
+          offIcon: Icons.person_off_outlined,
+          size: 15),
+    );
+  }
+}
+
+/// A bright band crossing the track left to right — the card reader's light
+/// passing over the badge. [t] runs 0→1 once.
+class _ScanSweepPainter extends CustomPainter {
+  _ScanSweepPainter(this.t);
+  final double t;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final x = -12 + (size.width + 24) * Curves.easeInOut.transform(t);
+    final rect = Rect.fromLTWH(x - 10, 0, 20, size.height);
+    final fade = sin(t * pi);
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = LinearGradient(colors: [
+          Colors.white.withValues(alpha: 0),
+          Colors.white.withValues(alpha: .65 * fade),
+          Colors.white.withValues(alpha: 0),
+        ]).createShader(rect),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_ScanSweepPainter old) => old.t != t;
+}
+
+// ── Sync ────────────────────────────────────────────────────────────────────
+
+/// Read data from an outside source (the holiday database): off, the link is
+/// broken — grey track, a cut chain, an empty calendar. On, the line is live:
+/// teal track, little data packets streaming along it into the knob, whose
+/// calendar fills with a tick.
+class DsSyncSwitch extends StatefulWidget {
+  const DsSyncSwitch({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.semanticLabel,
+  });
+
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+  final String? semanticLabel;
+
+  @override
+  State<DsSyncSwitch> createState() => _DsSyncSwitchState();
+}
+
+class _DsSyncSwitchState extends State<DsSyncSwitch>
+    with SingleTickerProviderStateMixin {
+  static const _teal = Color(0xff0e8f78);
+
+  late final AnimationController _flow = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 1500));
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _dsLoopWhile(context, _flow, widget.value);
+  }
+
+  @override
+  void didUpdateWidget(covariant DsSyncSwitch old) {
+    super.didUpdateWidget(old);
+    _dsLoopWhile(context, _flow, widget.value);
+  }
+
+  @override
+  void dispose() {
+    _flow.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final on = widget.value;
+    final colour = DsMotion.of(context, _dsSwitchColour);
+    return _DsSwitchShell(
+      value: on,
+      onChanged: widget.onChanged,
+      semanticLabel: widget.semanticLabel,
+      trackOn: const [Color(0xff3ad6b5), _teal],
+      trackOff: const [Color(0xffe5e8ec), Color(0xffd4d9df)],
+      focusColor: _teal,
+      knobColors: const [Colors.white, Color(0xffedf9f6)],
+      layers: [
+        _dsTrackIcon(colour,
+            visible: !on,
+            icon: Icons.link_off_rounded,
+            colour: const Color(0xff8d97a3),
+            right: 8,
+            size: 14),
+        Positioned.fill(
+          child: AnimatedOpacity(
+            duration: colour,
+            opacity: on ? 1 : 0,
+            child: AnimatedBuilder(
+              animation: _flow,
+              builder: (_, __) => CustomPaint(
+                  painter: _DataFlowPainter(_flow.value, _flow.isAnimating)),
+            ),
+          ),
+        ),
+      ],
+      knob: _dsKnobIcon(colour, on,
+          onIcon: Icons.event_available_rounded,
+          onColour: _teal,
+          offIcon: Icons.calendar_today_outlined,
+          offColour: const Color(0xff98a1ad),
+          size: 15),
+    );
+  }
+}
+
+/// A dotted line along the track and, while [moving], three small packets
+/// riding it into the knob on the right — fading in at the far end, shrinking
+/// as they are taken in.
+class _DataFlowPainter extends CustomPainter {
+  _DataFlowPainter(this.t, this.moving);
+  final double t;
+  final bool moving;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final y = size.height / 2;
+    final from = 7.0;
+    final to = size.width - size.height + 1; // the knob's left edge
+    final line = Paint()..color = Colors.white.withValues(alpha: .35);
+    for (var x = from; x < to; x += 5) {
+      canvas.drawCircle(Offset(x, y), .9, line);
+    }
+    if (!moving) return;
+    for (var i = 0; i < 3; i++) {
+      final p = (t + i / 3) % 1;
+      final x = from + (to - from) * p;
+      final grow = (p / .15).clamp(0.0, 1.0);
+      final shrink = ((1 - p) / .2).clamp(0.0, 1.0);
+      final s = 4.2 * min(grow, shrink);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromCenter(center: Offset(x, y), width: s, height: s),
+            const Radius.circular(1.2)),
+        Paint()..color = Colors.white.withValues(alpha: .9 * min(grow, shrink)),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DataFlowPainter old) =>
+      old.t != t || old.moving != moving;
+}

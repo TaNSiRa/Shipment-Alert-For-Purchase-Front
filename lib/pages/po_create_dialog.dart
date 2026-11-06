@@ -75,6 +75,8 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
   final remark = TextEditingController();
   final currency = TextEditingController();
   DateTime docDate = DateTime.now();
+  DateTime? deliveryDate;
+  String? deliveryError;
   String? mode;
   int? supplierId;
   List<Map<String, dynamic>> suppliers = [];
@@ -138,14 +140,6 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
     return null;
   }
 
-  /// Lead time the PO will get and where it comes from: the longest material
-  /// lead time on the lines.
-  (int, String)? get _lead {
-    final days = lines.map((l) => l.leadTime).whereType<int>().toList();
-    if (days.isEmpty) return null;
-    return (days.reduce(max), 'longest material lead time');
-  }
-
   double? get _total {
     final amounts = lines.map((l) => l.amount).whereType<double>().toList();
     return amounts.isEmpty ? null : amounts.reduce((a, b) => a + b);
@@ -182,9 +176,14 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
       linesError = items.isEmpty
           ? 'Add at least one item — a material code or a description'
           : null;
+      deliveryError = deliveryDate == null
+          ? 'Choose the Delivery date'
+          : deliveryDate!.isBefore(DateTime(docDate.year, docDate.month, docDate.day))
+              ? 'Before the PO date'
+              : null;
       error = null;
     });
-    if (poNoError != null || supplierError != null || linesError != null) {
+    if (poNoError != null || supplierError != null || linesError != null || deliveryError != null) {
       return;
     }
     setState(() => busy = true);
@@ -193,6 +192,7 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
         'poNo': no,
         'supplierId': supplierId,
         'documentDate': isoDate(docDate),
+        'deliveryDate': isoDate(deliveryDate!),
         if (mode != null) 'shipMode': mode,
         if (remark.text.trim().isNotEmpty) 'remark': remark.text.trim(),
         'items': items,
@@ -439,6 +439,43 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
       ),
     );
 
+    final deliveryField = _field(
+      'Delivery date',
+      required: true,
+      help: 'Step 7 · Factory good received',
+      Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(9),
+          onTap: () async {
+            var initial = deliveryDate ?? docDate.add(const Duration(days: 60));
+            if (initial.isBefore(docDate)) initial = docDate;
+            final picked = await showDatePicker(
+                context: context,
+                initialDate: initial,
+                firstDate: docDate,
+                lastDate: DateTime.now().add(const Duration(days: 365 * 3)));
+            if (picked != null) {
+              setState(() {
+                deliveryDate = picked;
+                deliveryError = null;
+              });
+            }
+          },
+          child: InputDecorator(
+              decoration: dsInput(
+                  icon: Icons.event_available_outlined,
+                  errorText: deliveryError,
+                  suffix: const Icon(Icons.arrow_drop_down,
+                      color: DsColors.iconSoft)),
+              child: Text(deliveryDate == null ? 'Choose' : fmtDate(isoDate(deliveryDate!)),
+                  style: TextStyle(
+                      fontSize: 14,
+                      color: deliveryDate == null ? DsColors.faint2 : DsColors.heading))),
+        ),
+      ),
+    );
+
     final modeField = _field('Shipping mode', _modePicker());
 
     final currencyField = _field(
@@ -471,7 +508,7 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
         return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              poField, gap, supplierField, gap, dateField, gap, //
+              poField, gap, supplierField, gap, dateField, gap, deliveryField, gap, //
               modeField, gap, currencyField, gap, remarkField,
             ]);
       }
@@ -482,6 +519,8 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
           Expanded(flex: 8, child: supplierField),
           gap,
           Expanded(flex: 4, child: dateField),
+          gap,
+          Expanded(flex: 4, child: deliveryField),
         ]),
         const SizedBox(height: 16),
         Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -623,7 +662,7 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
       gap,
       h('Net price', width: _colPrice, right: true),
       h('Amount', width: _colAmount, right: true),
-      h('Lead', width: _colLead, right: true),
+      h('', width: _colLead, right: true),
       const SizedBox(width: _colRemove),
     ]);
   }
@@ -668,8 +707,6 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
                           m['description'],
                           m['vendorMaterial'],
                           m['materialType'],
-                          if (m['leadTimeDays'] != null)
-                            '${m['leadTimeDays']} days',
                         ]
                             .where((v) => v != null && '$v'.isNotEmpty)
                             .join(' · '),
@@ -748,23 +785,7 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
           width: _colLead,
           child: Align(
             alignment: Alignment.centerRight,
-            child: l.leadTime == null
-                ? const Text('—', style: DsType.metaSm)
-                : Tooltip(
-                    message: 'Material lead time',
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                          color: DsColors.tealBg,
-                          borderRadius: BorderRadius.circular(6)),
-                      child: Text('${l.leadTime} d',
-                          style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              color: DsColors.tealFg)),
-                    ),
-                  ),
+            child: const SizedBox.shrink(),
           ),
         ),
         SizedBox(
@@ -788,7 +809,6 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
 
   /// What the PO will be tracked against once it is saved.
   Widget _summary() {
-    final lead = _lead;
     Widget stat(IconData icon, String label, String value, [String? note]) {
       return Row(mainAxisSize: MainAxisSize.min, children: [
         Container(
@@ -828,31 +848,17 @@ class _PoCreateDialogState extends State<_PoCreateDialog> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: DsColors.navy.withValues(alpha: .18)),
       ),
-      child: lead == null
-          ? Row(children: [
-              const Icon(Icons.timelapse, size: 17, color: DsColors.navy),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                    'Lead time: the section default will be used — no material or supplier lead time yet.',
-                    style: DsType.body.copyWith(fontSize: 12.5)),
-              ),
-            ])
-          : Wrap(
-              spacing: 18,
-              runSpacing: 10,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                stat(Icons.timelapse, 'Lead time', '${lead.$1} days',
-                    '(${lead.$2})'),
-                const Icon(Icons.arrow_forward,
-                    size: 18, color: DsColors.iconSoft),
-                stat(
-                    Icons.factory_outlined,
-                    'Expected at the factory around',
-                    fmtDate(isoDate(docDate.add(Duration(days: lead.$1))))),
-              ],
-            ),
+      child: Wrap(
+        spacing: 18,
+        runSpacing: 10,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          stat(Icons.event_outlined, 'PO date (N1)', fmtDate(isoDate(docDate))),
+          const Icon(Icons.arrow_forward, size: 18, color: DsColors.iconSoft),
+          stat(Icons.factory_outlined, 'Due at the factory (Delivery date)',
+              deliveryDate == null ? 'Choose the Delivery date' : fmtDate(isoDate(deliveryDate!))),
+        ],
+      ),
     );
   }
 }

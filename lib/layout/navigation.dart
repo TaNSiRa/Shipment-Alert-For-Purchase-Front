@@ -73,15 +73,16 @@ class _NavReveal extends StatelessWidget {
 
 
 /// Every page of the app, in sidebar order.
-enum AppPage { dashboard, pos, roadmap, calendar, workflow, suppliers, materials, users, settings, profile }
+enum AppPage { dashboard, pos, imports, roadmap, calendar, workflow, suppliers, materials, users, settings, profile }
 
 /// Title + one-line subtitle shown in the top bar for each page.
 (String, String) pageHeading(AppPage page) => switch (page) {
       AppPage.dashboard => ('Dashboard', 'Where every shipment stands today'),
       AppPage.pos => ('Shipments', 'Purchase orders — import, follow up and update each step'),
-      AppPage.roadmap => ('Road Map', 'Progress of every open shipment across the 9 steps'),
+      AppPage.imports => ('Import', 'Upload the SAP files that move POs: DATA EXPORT, OCR ACK and OCR SI'),
+      AppPage.roadmap => ('Road Map', 'Progress of every open shipment across the 7 steps'),
       AppPage.calendar => ('Calendar', 'Due dates, completed steps and expected arrivals'),
-      AppPage.workflow => ('Workflow', 'The 9-step purchase process and its lead times'),
+      AppPage.workflow => ('Workflow', 'The 7-step purchase process and its lead times'),
       AppPage.suppliers => ('Supplier Master', 'Suppliers and their default lead time'),
       AppPage.materials => ('Material Master', 'Materials, vendor material names and lead times'),
       AppPage.users => ('Manage Users', 'Accounts, roles and section access'),
@@ -121,6 +122,7 @@ class SideNav extends StatelessWidget {
         [
           (AppPage.dashboard, Icons.space_dashboard_outlined, 'Dashboard', 0),
           (AppPage.pos, Icons.inventory_2_outlined, 'Shipments', overdue),
+          (AppPage.imports, Icons.upload_file_outlined, 'Import', 0),
           (AppPage.roadmap, Icons.route_outlined, 'Road Map', 0),
           (AppPage.calendar, Icons.calendar_month_outlined, 'Calendar', 0),
         ]

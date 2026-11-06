@@ -39,7 +39,7 @@ class _CalendarPageState extends State<CalendarPage> {
     'eta': (
       DsColors.tealFg,
       DsColors.tealBg,
-      'ETA at factory',
+      'Delivery date (factory)',
       Icons.warehouse_outlined
     ),
   };

@@ -302,8 +302,8 @@ class _SupplierMasterPageState extends State<SupplierMasterPage> {
                 child: TextField(
                     controller: remark, maxLines: 2, decoration: dsInput())),
             const SizedBox(height: 8),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
+            DsSwitchTile(
+              style: DsSwitchStyle.ship,
               value: active,
               title: const Text('Active', style: TextStyle(fontSize: 13)),
               subtitle: const Text(
@@ -778,8 +778,8 @@ class _MaterialMasterPageState extends State<MaterialMasterPage> {
                 label: 'Material description',
                 child: TextField(
                     controller: desc, decoration: dsInput(hint: 'TA22B'))),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
+            DsSwitchTile(
+              style: DsSwitchStyle.ship,
               value: active,
               title: const Text('Active', style: TextStyle(fontSize: 13)),
               onChanged: (v) => setState(() => active = v),

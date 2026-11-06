@@ -221,7 +221,7 @@ const shipModeItems = [
 
 /// Steps in the purchase workflow (the backend's STEP_COUNT). The month-end
 /// report is an email, not a step, so a PO is done once its goods arrive.
-const kStepCount = 9;
+const kStepCount = 7;
 
 /// The step the PO is waiting at, in large type, over a progress bar with
 /// the count of steps done.
